@@ -1,0 +1,134 @@
+spring:
+  application:
+    name: notification-service
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/notification_db
+    username: notification_user
+    password: notification_pass
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 20000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate  # Or use 'update' for development
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          lob:
+            non_contextual_creation: true
+    show-sql: true
+
+  kafka:
+    bootstrap-servers: localhost:9092
+
+    consumer:
+      group-id: notification-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+        spring.json.type.mapping: >
+          user.registered:com.examplatform.notification.event.inbound.UserRegisteredEvent,
+          session.completed:com.examplatform.notification.event.inbound.SessionCompletedEvent,
+          proctoring.violation:com.examplatform.notification.event.inbound.ProctoringViolationEvent,
+          assessment.published:com.examplatform.notification.event.inbound.AssessmentPublishedEvent
+
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+    admin:
+      fail-fast: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MAIL_USERNAME:your-email@gmail.com}
+    password: ${MAIL_PASSWORD:your-app-password}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+
+  # MVC settings for SSE support
+  mvc:
+    async:
+      request-timeout: 86400000  # 24 hours for async requests (SSE)
+
+server:
+  port: 8082
+  servlet:
+    context-path: /notification-service
+  # SSE specific settings
+  tomcat:
+    connection-timeout: 86400000  # 24 hours for SSE connections
+    max-connections: 10000
+    accept-count: 100
+
+logging:
+  level:
+    com.examplatform.notification: DEBUG
+    org.springframework.kafka: INFO
+    org.springframework.web: INFO
+    org.springframework.security: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/notification-service.log
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+    expiration: 86400000
+
+  notification:
+    retry:
+      max-attempts: 3
+      delay-ms: 5000
+
+    # SSE configuration (replacing websocket)
+    sse:
+      timeout-ms: 86400000  # 24 hours
+      heartbeat-interval-ms: 30000  # 30 seconds
+      connection-limit-per-user: 5  # Max SSE connections per user
+
+    email:
+      from: ${MAIL_FROM:noreply@examplatform.com}
+      from-name: Exam Platform
+
+  kafka:
+    topics:
+      inbound:
+        user-events: user-events
+        assessment-events: assessment-events
+        proctoring-events: proctoring-events
+      outbound:
+        notification-events: notification-events
