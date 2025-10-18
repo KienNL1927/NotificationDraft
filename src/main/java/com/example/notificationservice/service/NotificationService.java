@@ -1,6 +1,5 @@
 package com.example.notificationservice.service;
 
-
 import com.example.notificationservice.entity.Notification;
 import com.example.notificationservice.entity.NotificationPreference;
 import com.example.notificationservice.entity.NotificationTemplate;
@@ -34,8 +33,8 @@ public class NotificationService {
     private final NotificationRepository notificationRepository;
     private final NotificationTemplateRepository templateRepository;
     private final NotificationPreferenceRepository preferenceRepository;
-    //private final EmailService emailService;
-    private SseEmitterService sseEmitterService;
+    private final EmailService emailService;
+    private final SseEmitterService sseEmitterService;
     private final TemplateEngine templateEngine;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
@@ -95,26 +94,20 @@ public class NotificationService {
             boolean sent = false;
 
             switch (notification.getChannel()) {
-//                case EMAIL:
-//                    sent = emailService.sendEmail(
-//                            notification.getRecipientEmail(),
-//                            notification.getSubject(),
-//                            notification.getContent()
-//                    );
-//                    break;
+                case EMAIL:
+                    sent = emailService.sendEmail(
+                            notification.getRecipientEmail(),
+                            notification.getSubject(),
+                            notification.getContent()
+                    );
+                    break;
 
                 case SSE:
-                    sseEmitterService.sendToUser(
+                    sent = sseEmitterService.sendToUser(
                             notification.getRecipientId(),
                             notification.getType(),
                             notification.getContent()
                     );
-                    sent = true;
-                    break;
-
-                case SMS:
-                    // SMS implementation would go here
-                    log.warn("SMS channel not implemented yet");
                     break;
 
                 case PUSH:
@@ -150,8 +143,9 @@ public class NotificationService {
         publishNotificationFailedEvent(notification, willRetry);
 
         if (willRetry) {
-            // Schedule retry
-            sendNotification(notification);
+            // Retry will be handled by scheduled method
+            log.info("Notification {} scheduled for retry (attempt {})",
+                    notification.getId(), notification.getRetryCount());
         }
     }
 
@@ -161,6 +155,7 @@ public class NotificationService {
                 .findByStatusAndRetryCountLessThan(NotificationStatus.PENDING, maxRetryAttempts);
 
         for (Notification notification : failedNotifications) {
+            log.info("Retrying notification {}", notification.getId());
             sendNotification(notification);
         }
     }
@@ -184,7 +179,6 @@ public class NotificationService {
         return switch (channel) {
             case EMAIL -> pref.getEmailEnabled();
             case SSE -> pref.getSseEnabled();
-            case SMS -> pref.getSmsEnabled();
             case PUSH -> pref.getPushEnabled();
         };
     }

@@ -1,7 +1,7 @@
 package com.example.notificationservice.controller;
 
+import com.example.notificationservice.config.CasdoorAuthenticationContext;
 import com.example.notificationservice.service.SseEmitterService;
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -19,18 +19,18 @@ import java.util.Map;
 public class SseController {
 
     private final SseEmitterService sseEmitterService;
+    private final CasdoorAuthenticationContext authContext;
 
     /**
      * Establish SSE connection for user notifications
-     * The client should connect to this endpoint to receive real-time notifications
      */
     @GetMapping(value = "/connect", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter connect(HttpServletRequest request) {
-        Integer userId = (Integer) request.getAttribute("userId");
-        String username = (String) request.getAttribute("username");
+    public SseEmitter connect() {
+        Integer userId = authContext.getCurrentUserId().orElse(null);
+        String username = authContext.getCurrentUsername().orElse("unknown");
 
         if (userId == null) {
-            log.error("No userId found in request attributes");
+            log.error("No userId found in authentication context");
             SseEmitter emitter = new SseEmitter(0L);
             emitter.completeWithError(new IllegalStateException("Authentication required"));
             return emitter;
@@ -44,15 +44,12 @@ public class SseController {
      * Subscribe to a specific topic for broadcast messages
      */
     @GetMapping(value = "/subscribe/{topic}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter subscribeToTopic(
-            @PathVariable String topic,
-            HttpServletRequest request) {
-
-        Integer userId = (Integer) request.getAttribute("userId");
-        String username = (String) request.getAttribute("username");
+    public SseEmitter subscribeToTopic(@PathVariable String topic) {
+        Integer userId = authContext.getCurrentUserId().orElse(null);
+        String username = authContext.getCurrentUsername().orElse("unknown");
 
         if (userId == null) {
-            log.error("No userId found in request attributes");
+            log.error("No userId found in authentication context");
             SseEmitter emitter = new SseEmitter(0L);
             emitter.completeWithError(new IllegalStateException("Authentication required"));
             return emitter;
@@ -68,11 +65,9 @@ public class SseController {
     @PostMapping("/test/send-to-user")
     public ResponseEntity<Map<String, Object>> sendTestNotificationToUser(
             @RequestParam Integer targetUserId,
-            @RequestParam String message,
-            HttpServletRequest request) {
+            @RequestParam String message) {
 
-        // Check if requester is admin
-        if (!request.isUserInRole("ROLE_ADMIN")) {
+        if (!authContext.isAdmin()) {
             return ResponseEntity.status(403).body(Map.of(
                     "error", "Forbidden",
                     "message", "Only admins can send test notifications"
@@ -99,11 +94,9 @@ public class SseController {
     @PostMapping("/test/broadcast")
     public ResponseEntity<Map<String, Object>> broadcastToTopic(
             @RequestParam String topic,
-            @RequestParam String message,
-            HttpServletRequest request) {
+            @RequestParam String message) {
 
-        // Check if requester is admin
-        if (!request.isUserInRole("ROLE_ADMIN")) {
+        if (!authContext.isAdmin()) {
             return ResponseEntity.status(403).body(Map.of(
                     "error", "Forbidden",
                     "message", "Only admins can send broadcast messages"
@@ -128,10 +121,8 @@ public class SseController {
      * Get SSE connection statistics (Admin only)
      */
     @GetMapping("/stats")
-    public ResponseEntity<Map<String, Object>> getConnectionStats(HttpServletRequest request) {
-
-        // Check if requester is admin
-        if (!request.isUserInRole("ROLE_ADMIN")) {
+    public ResponseEntity<Map<String, Object>> getConnectionStats() {
+        if (!authContext.isAdmin()) {
             return ResponseEntity.status(403).body(Map.of(
                     "error", "Forbidden",
                     "message", "Only admins can view connection statistics"
@@ -148,15 +139,11 @@ public class SseController {
      * Check if a specific user is connected
      */
     @GetMapping("/status/{userId}")
-    public ResponseEntity<Map<String, Object>> checkUserConnection(
-            @PathVariable Integer userId,
-            HttpServletRequest request) {
+    public ResponseEntity<Map<String, Object>> checkUserConnection(@PathVariable Integer userId) {
+        Integer currentUserId = authContext.getCurrentUserId().orElse(null);
+        boolean isAdmin = authContext.isAdmin();
 
-        // Users can only check their own connection or admin can check any
-        Integer requestUserId = (Integer) request.getAttribute("userId");
-        boolean isAdmin = request.isUserInRole("ROLE_ADMIN");
-
-        if (!isAdmin && !userId.equals(requestUserId)) {
+        if (!isAdmin && !userId.equals(currentUserId)) {
             return ResponseEntity.status(403).body(Map.of(
                     "error", "Forbidden",
                     "message", "You can only check your own connection status"
@@ -176,15 +163,11 @@ public class SseController {
      * Manually disconnect a user (self or admin)
      */
     @PostMapping("/disconnect/{userId}")
-    public ResponseEntity<Map<String, Object>> disconnectUser(
-            @PathVariable Integer userId,
-            HttpServletRequest request) {
+    public ResponseEntity<Map<String, Object>> disconnectUser(@PathVariable Integer userId) {
+        Integer currentUserId = authContext.getCurrentUserId().orElse(null);
+        boolean isAdmin = authContext.isAdmin();
 
-        // Users can only disconnect themselves or admin can disconnect any
-        Integer requestUserId = (Integer) request.getAttribute("userId");
-        boolean isAdmin = request.isUserInRole("ROLE_ADMIN");
-
-        if (!isAdmin && !userId.equals(requestUserId)) {
+        if (!isAdmin && !userId.equals(currentUserId)) {
             return ResponseEntity.status(403).body(Map.of(
                     "error", "Forbidden",
                     "message", "You can only disconnect your own connection"

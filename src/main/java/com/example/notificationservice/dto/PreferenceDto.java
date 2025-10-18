@@ -1,4 +1,3 @@
-// PreferenceDto.java
 package com.example.notificationservice.dto;
 
 import com.example.notificationservice.enums.EmailFrequency;
@@ -23,9 +22,6 @@ public class PreferenceDto {
 
     @Builder.Default
     private Boolean emailEnabled = true;
-
-    @Builder.Default
-    private Boolean smsEnabled = false;
 
     @Builder.Default
     private Boolean pushEnabled = true;

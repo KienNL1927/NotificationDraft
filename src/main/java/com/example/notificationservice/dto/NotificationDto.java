@@ -29,5 +29,4 @@ public class NotificationDto {
     private LocalDateTime deliveredAt;
     private String errorMessage;
     private Integer retryCount;
-    private LocalDateTime createdAt;
 }

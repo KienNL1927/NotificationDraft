@@ -31,16 +31,13 @@ public class NotificationPreference {
     @Builder.Default
     private Boolean emailEnabled = true;
 
-    @Column(name = "sms_enabled")
-    @Builder.Default
-    private Boolean smsEnabled = false;
-
     @Column(name = "push_enabled")
     @Builder.Default
     private Boolean pushEnabled = true;
 
     @Column(name = "sse_enabled")
-    private Boolean sseEnabled;
+    @Builder.Default
+    private Boolean sseEnabled = true;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "email_frequency", length = 20)

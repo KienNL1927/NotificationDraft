@@ -50,9 +50,8 @@ CREATE TABLE notification_preferences (
                                           id SERIAL PRIMARY KEY,
                                           user_id INTEGER UNIQUE NOT NULL,
                                           email_enabled BOOLEAN DEFAULT true,
-                                          sms_enabled BOOLEAN DEFAULT false,
                                           push_enabled BOOLEAN DEFAULT true,
-                                          websocket_enabled BOOLEAN DEFAULT true,
+                                          sse_enabled BOOLEAN DEFAULT true,
                                           email_frequency VARCHAR(20) DEFAULT 'immediate',
                                           categories JSONB,
                                           created_at TIMESTAMP DEFAULT NOW(),
@@ -61,7 +60,6 @@ CREATE TABLE notification_preferences (
 
 -- Create index for user_id lookup
 CREATE INDEX idx_notification_preferences_user_id ON notification_preferences(user_id);
-
 
 -- Create trigger function for updated_at
 CREATE OR REPLACE FUNCTION update_updated_at_column()

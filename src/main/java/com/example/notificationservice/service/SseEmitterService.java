@@ -219,7 +219,7 @@ public class SseEmitterService {
     /**
      * Send heartbeat to keep connections alive
      */
-    @Scheduled(fixedDelay = 30000) // Every 30 seconds
+    @Scheduled(fixedDelay = 300000) // Every 30 seconds
     public void sendHeartbeat() {
         Map<String, Object> heartbeat = Map.of(
                 "timestamp", LocalDateTime.now(),

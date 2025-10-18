@@ -1,8 +1,8 @@
 package com.example.notificationservice.controller;
 
+import com.example.notificationservice.config.CasdoorAuthenticationContext;
 import com.example.notificationservice.dto.PreferenceDto;
 import com.example.notificationservice.service.PreferenceService;
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,18 +18,17 @@ import org.springframework.web.bind.annotation.*;
 public class PreferenceController {
 
     private final PreferenceService preferenceService;
+    private final CasdoorAuthenticationContext authContext;
 
     @GetMapping("/{userId}/preferences")
     @PreAuthorize("hasRole('ADMIN') or #userId == authentication.principal")
-    public ResponseEntity<PreferenceDto> getUserPreferences(
-            @PathVariable Integer userId,
-            HttpServletRequest request) {
+    public ResponseEntity<PreferenceDto> getUserPreferences(@PathVariable Integer userId) {
 
         // Verify user is accessing their own preferences or is admin
-        Integer requestUserId = (Integer) request.getAttribute("userId");
-        boolean isAdmin = request.isUserInRole("ROLE_ADMIN");
+        Integer currentUserId = authContext.getCurrentUserId().orElse(null);
+        boolean isAdmin = authContext.isAdmin();
 
-        if (!isAdmin && !userId.equals(requestUserId)) {
+        if (!isAdmin && !userId.equals(currentUserId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
@@ -43,14 +42,13 @@ public class PreferenceController {
     @PreAuthorize("hasRole('ADMIN') or #userId == authentication.principal")
     public ResponseEntity<PreferenceDto> updateUserPreferences(
             @PathVariable Integer userId,
-            @Valid @RequestBody PreferenceDto preferenceDto,
-            HttpServletRequest request) {
+            @Valid @RequestBody PreferenceDto preferenceDto) {
 
         // Verify user is updating their own preferences or is admin
-        Integer requestUserId = (Integer) request.getAttribute("userId");
-        boolean isAdmin = request.isUserInRole("ROLE_ADMIN");
+        Integer currentUserId = authContext.getCurrentUserId().orElse(null);
+        boolean isAdmin = authContext.isAdmin();
 
-        if (!isAdmin && !userId.equals(requestUserId)) {
+        if (!isAdmin && !userId.equals(currentUserId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
@@ -64,14 +62,13 @@ public class PreferenceController {
     @PreAuthorize("hasRole('ADMIN') or #userId == authentication.principal")
     public ResponseEntity<PreferenceDto> createUserPreferences(
             @PathVariable Integer userId,
-            @Valid @RequestBody PreferenceDto preferenceDto,
-            HttpServletRequest request) {
+            @Valid @RequestBody PreferenceDto preferenceDto) {
 
         // Verify user is creating their own preferences or is admin
-        Integer requestUserId = (Integer) request.getAttribute("userId");
-        boolean isAdmin = request.isUserInRole("ROLE_ADMIN");
+        Integer currentUserId = authContext.getCurrentUserId().orElse(null);
+        boolean isAdmin = authContext.isAdmin();
 
-        if (!isAdmin && !userId.equals(requestUserId)) {
+        if (!isAdmin && !userId.equals(currentUserId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 

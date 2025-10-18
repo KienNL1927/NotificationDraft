@@ -34,3 +34,11 @@ build/
 
 ### log ###
 /logs
+
+Makefile
+startup.sh
+shutdown.sh
+.env
+.env.example
+.mvnw
+./src/main/resources/application.yml

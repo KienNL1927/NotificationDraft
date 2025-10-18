@@ -1,4 +1,3 @@
-// PreferenceService.java
 package com.example.notificationservice.service;
 
 import com.example.notificationservice.dto.PreferenceDto;
@@ -31,7 +30,6 @@ public class PreferenceService {
         NotificationPreference preference = NotificationPreference.builder()
                 .userId(dto.getUserId())
                 .emailEnabled(dto.getEmailEnabled())
-                .smsEnabled(dto.getSmsEnabled())
                 .pushEnabled(dto.getPushEnabled())
                 .sseEnabled(dto.getSseEnabled())
                 .emailFrequency(dto.getEmailFrequency())
@@ -50,7 +48,6 @@ public class PreferenceService {
                         .build());
 
         preference.setEmailEnabled(dto.getEmailEnabled());
-        preference.setSmsEnabled(dto.getSmsEnabled());
         preference.setPushEnabled(dto.getPushEnabled());
         preference.setSseEnabled(dto.getSseEnabled());
         preference.setEmailFrequency(dto.getEmailFrequency());
@@ -65,7 +62,6 @@ public class PreferenceService {
                 .id(entity.getId())
                 .userId(entity.getUserId())
                 .emailEnabled(entity.getEmailEnabled())
-                .smsEnabled(entity.getSmsEnabled())
                 .pushEnabled(entity.getPushEnabled())
                 .sseEnabled(entity.getSseEnabled())
                 .emailFrequency(entity.getEmailFrequency())
