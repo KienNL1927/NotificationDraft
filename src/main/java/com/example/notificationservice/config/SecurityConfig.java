@@ -41,7 +41,7 @@ public class SecurityConfig {
     @Order(0)
     public SecurityFilterChain actuatorChain(HttpSecurity http) throws Exception {
         http
-                .securityMatcher(EndpointRequest.toAnyEndpoint()) // matches /actuator/** (tôn trọng base-path/port)
+                .securityMatcher(EndpointRequest.toAnyEndpoint())
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -64,9 +64,10 @@ public class SecurityConfig {
 
                         // admin
                         .requestMatchers("/api/v1/templates/**").hasRole("ADMIN")
+                        .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
 
                         // user
-                        .requestMatchers("/api/v1/users/*/preferences").authenticated()
+                        .requestMatchers("/api/v1/preferences/**").authenticated()
                         .requestMatchers("/api/v1/sse/**").authenticated()
 
                         // còn lại
@@ -89,7 +90,7 @@ public class SecurityConfig {
     public JwtAuthenticationConverter jwtAuthenticationConverter() {
         // Scopes chuẩn (scope/scp) -> SCOPE_*
         JwtGrantedAuthoritiesConverter scopesConverter = new JwtGrantedAuthoritiesConverter();
-        scopesConverter.setAuthoritiesClaimName("scope"); // nếu IdP dùng "scp", ta xử lý thêm bên dưới
+        scopesConverter.setAuthoritiesClaimName("scope");
         scopesConverter.setAuthorityPrefix("SCOPE_");
 
         Converter<Jwt, Collection<GrantedAuthority>> custom = jwt -> {
@@ -98,7 +99,7 @@ public class SecurityConfig {
             // 1) scopes từ "scope"
             out.addAll(scopesConverter.convert(jwt));
 
-            // 1b) thêm từ "scp" nếu có (nhiều IdP đặt ở claim "scp": List<String>)
+            // 1b) thêm từ "scp" nếu có
             Object scp = jwt.getClaims().get("scp");
             if (scp instanceof Collection<?> c) {
                 for (Object it : c) {
@@ -112,7 +113,7 @@ public class SecurityConfig {
                 }
             }
 
-            // 2) roles từ Casdoor: [{ "name": "Admin", ... }]
+            // 2) roles từ Casdoor: [{ "name": "Admin", ... }] hoặc [{ "NAME": "ADMIN", ... }]
             Object rolesObj = jwt.getClaims().get("roles");
             normalizeRoles(rolesObj).forEach(r -> out.add(new SimpleGrantedAuthority(r)));
 
@@ -150,7 +151,7 @@ public class SecurityConfig {
     }
 
     // ==== Helpers ====
-    /** Chuyển mọi dạng claim "roles" về danh sách ROLE_* */
+    /** Chuyển mọi dạng claim "roles" về danh sách ROLE_* - CASE INSENSITIVE */
     private static List<String> normalizeRoles(Object rolesClaim) {
         List<String> out = new ArrayList<>();
         if (rolesClaim instanceof Collection<?> coll) {
@@ -158,16 +159,41 @@ public class SecurityConfig {
                 if (it instanceof String s) {
                     addRole(out, s);
                 } else if (it instanceof Map<?,?> m) {
-                    // Casdoor: name là khoá chính ("Admin")
-                    Object v = firstNonNull(m.get("name"), m.get("role"), m.get("authority"),
-                            m.get("value"), m.get("code"), m.get("key"));
-                    if (v instanceof String s) addRole(out, s);
+                    // FIXED: Case-insensitive key lookup for Casdoor
+                    Object v = getMapValueIgnoreCase(m, "name", "role", "authority",
+                            "value", "code", "key", "displayname");
+                    if (v instanceof String s) {
+                        addRole(out, s);
+                    }
                 }
             }
         } else if (rolesClaim instanceof String s) {
             addRole(out, s);
         }
         return out;
+    }
+
+    /**
+     * Get value from map with case-insensitive key lookup
+     * Tries each key in order, returns first non-null value
+     */
+    private static Object getMapValueIgnoreCase(Map<?,?> map, String... keys) {
+        // Create a case-insensitive lookup map
+        Map<String, Object> lowerCaseMap = new HashMap<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (entry.getKey() instanceof String key) {
+                lowerCaseMap.put(key.toLowerCase(Locale.ROOT), entry.getValue());
+            }
+        }
+
+        // Try each key
+        for (String key : keys) {
+            Object value = lowerCaseMap.get(key.toLowerCase(Locale.ROOT));
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private static void addRole(List<String> out, String raw) {
@@ -179,9 +205,13 @@ public class SecurityConfig {
         if (name == null) return null;
         String r = name.trim();
         if (r.isEmpty()) return null;
-        // chuẩn hoá: Admin -> ROLE_ADMIN, "quản trị viên" -> ROLE_QUAN_TRI_VIEN
+
+        // Remove non-alphanumeric characters and convert to uppercase
         r = r.replaceAll("[^a-zA-Z0-9]+", "_").toUpperCase(Locale.ROOT);
+
+        // Ensure ROLE_ prefix
         if (!r.startsWith("ROLE_")) r = "ROLE_" + r;
+
         return r;
     }
 

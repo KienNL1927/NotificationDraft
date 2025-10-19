@@ -57,6 +57,17 @@ public class PreferenceService {
         return mapToDto(saved);
     }
 
+    @Transactional
+    public boolean deleteUserPreferences(Integer userId) {
+        return preferenceRepository.findByUserId(userId)
+                .map(preference -> {
+                    preferenceRepository.delete(preference);
+                    log.info("Deleted preferences for user: {}", userId);
+                    return true;
+                })
+                .orElse(false);
+    }
+
     private PreferenceDto mapToDto(NotificationPreference entity) {
         return PreferenceDto.builder()
                 .id(entity.getId())
@@ -68,4 +79,6 @@ public class PreferenceService {
                 .categories(entity.getCategories())
                 .build();
     }
+
+
 }

@@ -6,9 +6,8 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
 import lombok.extern.slf4j.Slf4j;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Component
 @Slf4j
@@ -136,44 +135,100 @@ public class CasdoorAuthenticationContext {
 
     public List<String> getCurrentUserRoles() {
         return getJwt().map(jwt -> {
-            // Casdoor might use different claim names for roles
-            List<String> roles = jwt.getClaimAsStringList("roles");
+            List<String> roles = new ArrayList<>();
 
-            if (roles == null || roles.isEmpty()) {
-                roles = jwt.getClaimAsStringList("groups");
-            }
+            // Get roles claim (could be list of objects or strings)
+            Object rolesObj = jwt.getClaim("roles");
 
-            if (roles == null || roles.isEmpty()) {
-                // Check if role is a single string
-                String role = jwt.getClaimAsString("role");
-                if (role != null) {
-                    roles = List.of(role);
+            if (rolesObj instanceof Collection<?> coll) {
+                for (Object item : coll) {
+                    if (item instanceof String s) {
+                        roles.add(normalizeRole(s));
+                    } else if (item instanceof Map<?, ?> m) {
+                        // FIXED: Case-insensitive lookup for Casdoor role objects
+                        String roleName = getMapValueIgnoreCase(m, "name", "role", "displayname");
+                        if (roleName != null) {
+                            roles.add(normalizeRole(roleName));
+                        }
+                    }
                 }
             }
 
-            if (roles == null || roles.isEmpty()) {
-                // Check tag field which Casdoor uses for roles
+            // Fallback: Check 'groups' claim
+            if (roles.isEmpty()) {
+                List<String> groups = jwt.getClaimAsStringList("groups");
+                if (groups != null) {
+                    roles.addAll(groups.stream().map(this::normalizeRole).toList());
+                }
+            }
+
+            // Fallback: Check single 'role' string
+            if (roles.isEmpty()) {
+                String role = jwt.getClaimAsString("role");
+                if (role != null) {
+                    roles.add(normalizeRole(role));
+                }
+            }
+
+            // Check 'tag' field (Casdoor specific)
+            if (roles.isEmpty()) {
                 String tag = jwt.getClaimAsString("tag");
                 if (tag != null) {
                     if (tag.equalsIgnoreCase("admin") || tag.equalsIgnoreCase("staff")) {
-                        roles = List.of("ROLE_ADMIN");
+                        roles.add("ROLE_ADMIN");
                     } else {
-                        roles = List.of("ROLE_USER");
+                        roles.add("ROLE_USER");
                     }
                 }
             }
 
             // Default to USER role if no roles found
-            if (roles == null || roles.isEmpty()) {
-                roles = List.of("ROLE_USER");
+            if (roles.isEmpty()) {
+                roles.add("ROLE_USER");
             }
 
-            // Ensure all roles have ROLE_ prefix for Spring Security
-            return roles.stream()
-                    .map(r -> r.toUpperCase().startsWith("ROLE_") ? r.toUpperCase() : "ROLE_" + r.toUpperCase())
-                    .toList();
+            // Remove duplicates
+            return roles.stream().distinct().collect(Collectors.toList());
 
         }).orElse(List.of());
+    }
+
+    /**
+     * Case-insensitive map value lookup
+     */
+    private String getMapValueIgnoreCase(Map<?, ?> map, String... keys) {
+        Map<String, Object> lowerCaseMap = new HashMap<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (entry.getKey() instanceof String key) {
+                lowerCaseMap.put(key.toLowerCase(Locale.ROOT), entry.getValue());
+            }
+        }
+
+        for (String key : keys) {
+            Object value = lowerCaseMap.get(key.toLowerCase(Locale.ROOT));
+            if (value instanceof String s) {
+                return s;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Normalize role name to Spring Security format
+     */
+    private String normalizeRole(String role) {
+        if (role == null || role.isEmpty()) {
+            return "ROLE_USER";
+        }
+
+        String normalized = role.trim().toUpperCase(Locale.ROOT);
+
+        // Ensure ROLE_ prefix
+        if (!normalized.startsWith("ROLE_")) {
+            normalized = "ROLE_" + normalized;
+        }
+
+        return normalized;
     }
 
     public boolean hasRole(String role) {
@@ -225,6 +280,7 @@ public class CasdoorAuthenticationContext {
             claims.forEach((key, value) ->
                     log.debug("  {} = {} (type: {})", key, value, value != null ? value.getClass().getSimpleName() : "null")
             );
+            log.debug("Extracted roles: {}", getCurrentUserRoles());
         });
     }
 }
