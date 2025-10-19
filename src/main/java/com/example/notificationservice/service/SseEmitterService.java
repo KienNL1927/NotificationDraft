@@ -8,7 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -63,7 +63,7 @@ public class SseEmitterService {
                     .data(Map.of(
                             "message", "Connected to notification service",
                             "userId", userId,
-                            "timestamp", LocalDateTime.now()
+                            "timestamp", Instant.now()
                     ));
             emitter.send(event);
             log.info("SSE connection established for user: {}", userId);
@@ -105,7 +105,7 @@ public class SseEmitterService {
                     .data(Map.of(
                             "topic", topic,
                             "message", "Subscribed to topic: " + topic,
-                            "timestamp", LocalDateTime.now()
+                            "timestamp", Instant.now()
                     ));
             emitter.send(event);
             log.info("User {} subscribed to topic: {}", userId, topic);
@@ -151,7 +151,7 @@ public class SseEmitterService {
         Map<String, Object> notification = Map.of(
                 "type", type,
                 "content", content,
-                "timestamp", LocalDateTime.now(),
+                "timestamp", Instant.now(),
                 "id", System.currentTimeMillis()
         );
 
@@ -222,7 +222,7 @@ public class SseEmitterService {
     @Scheduled(fixedDelay = 300000) // Every 30 seconds
     public void sendHeartbeat() {
         Map<String, Object> heartbeat = Map.of(
-                "timestamp", LocalDateTime.now(),
+                "timestamp", Instant.now(),
                 "type", "heartbeat"
         );
 

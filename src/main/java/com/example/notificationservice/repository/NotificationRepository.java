@@ -10,7 +10,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 
 @Repository
@@ -22,7 +22,7 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
 
     @Query("SELECT n FROM Notification n WHERE n.status = :status AND n.createdAt < :before")
     List<Notification> findOldNotificationsByStatus(@Param("status") NotificationStatus status,
-                                                    @Param("before") LocalDateTime before);
+                                                    @Param("before") Instant before);
 
     @Query("SELECT COUNT(n) FROM Notification n WHERE n.recipientId = :userId AND n.status = 'PENDING'")
     long countPendingNotificationsByUserId(@Param("userId") Integer userId);

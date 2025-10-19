@@ -20,9 +20,4 @@ public class SseConfig implements WebMvcConfigurer {
                 .allowCredentials(false)
                 .maxAge(3600);
     }
-
-    @Bean
-    public ObjectMapper objectMapper() {
-        return new ObjectMapper();
-    }
 }

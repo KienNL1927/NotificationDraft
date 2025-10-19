@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Scanner;
 
@@ -128,7 +128,7 @@ public class TestDataGenerator implements CommandLineRunner {
                 .assessmentId("ASSESS-" + System.currentTimeMillis())
                 .assessmentName("Spring Boot Advanced")
                 .duration(120)
-                .dueDate(LocalDateTime.now().plusDays(7).toString())
+                .dueDate(Instant.now().plusSeconds(604800).toString())
                 .assignedUsers(List.of(
                         AssessmentPublishedEvent.UserInfo.builder()
                                 .userId(123)

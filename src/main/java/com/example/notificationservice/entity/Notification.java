@@ -8,7 +8,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Entity
 @Table(name = "notifications")
@@ -54,10 +54,10 @@ public class Notification {
     private NotificationStatus status = NotificationStatus.PENDING;
 
     @Column(name = "sent_at")
-    private LocalDateTime sentAt;
+    private Instant sentAt;
 
     @Column(name = "delivered_at")
-    private LocalDateTime deliveredAt;
+    private Instant deliveredAt;
 
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
@@ -67,19 +67,19 @@ public class Notification {
     private Integer retryCount = 0;
 
     @Column(name = "created_at", nullable = false, updatable = false)
-    private LocalDateTime createdAt;
+    private Instant createdAt;
 
     @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
+    private Instant updatedAt;
 
     @PrePersist
     protected void onCreate() {
-        createdAt = LocalDateTime.now();
-        updatedAt = LocalDateTime.now();
+        createdAt = Instant.now();
+        updatedAt = Instant.now();
     }
 
     @PreUpdate
     protected void onUpdate() {
-        updatedAt = LocalDateTime.now();
+        updatedAt = Instant.now();
     }
 }

@@ -20,7 +20,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -162,9 +162,9 @@ public class NotificationService {
 
     private void updateNotificationStatus(Notification notification, NotificationStatus status) {
         notification.setStatus(status);
-        notification.setSentAt(LocalDateTime.now());
+        notification.setSentAt(Instant.now());
         if (status == NotificationStatus.DELIVERED) {
-            notification.setDeliveredAt(LocalDateTime.now());
+            notification.setDeliveredAt(Instant.now());
         }
         notificationRepository.save(notification);
     }
@@ -200,7 +200,7 @@ public class NotificationService {
                 .channel(notification.getChannel().toString())
                 .type(notification.getType())
                 .status("sent")
-                .deliveryTime(LocalDateTime.now().toString())
+                .deliveryTime(Instant.now().toString())
                 .build();
         event.init();
 

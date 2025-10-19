@@ -75,8 +75,6 @@ public class TemplateService {
                 .subject(entity.getSubject())
                 .body(entity.getBody())
                 .variables(entity.getVariables())
-                .createdAt(entity.getCreatedAt())
-                .updatedAt(entity.getUpdatedAt())
                 .build();
     }
 }
