@@ -1,4 +1,3 @@
-// NotificationRepository.java
 package com.example.notificationservice.repository;
 
 import com.example.notificationservice.entity.Notification;
@@ -12,9 +11,10 @@ import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 @Repository
-public interface NotificationRepository extends JpaRepository<Notification, Long> {
+public interface NotificationRepository extends JpaRepository<Notification, UUID> {
 
     Page<Notification> findByRecipientId(Integer recipientId, Pageable pageable);
 

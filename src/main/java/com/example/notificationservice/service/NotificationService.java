@@ -1,10 +1,12 @@
 package com.example.notificationservice.service;
 
+import com.example.notificationservice.dto.BulkNotificationRequest;
 import com.example.notificationservice.entity.Notification;
 import com.example.notificationservice.entity.NotificationPreference;
 import com.example.notificationservice.entity.NotificationTemplate;
 import com.example.notificationservice.enums.NotificationChannel;
 import com.example.notificationservice.enums.NotificationStatus;
+import com.example.notificationservice.event.outbound.BulkNotificationCompletedEvent;
 import com.example.notificationservice.event.outbound.NotificationFailedEvent;
 import com.example.notificationservice.event.outbound.NotificationSentEvent;
 import com.example.notificationservice.repository.NotificationPreferenceRepository;
@@ -21,9 +23,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 @RequiredArgsConstructor
@@ -44,6 +46,9 @@ public class NotificationService {
     @Value("${app.kafka.topics.outbound.notification-events}")
     private String notificationEventsTopic;
 
+    /**
+     * Process single notification for a user
+     */
     @Transactional
     public void processNotification(String eventType, Integer userId, String email,
                                     Map<String, Object> data, List<NotificationChannel> channels) {
@@ -61,6 +66,11 @@ public class NotificationService {
         }
 
         NotificationTemplate template = templateOpt.get();
+
+        // Validate template data
+        if (!templateEngine.validateTemplateData(template.getBody(), data)) {
+            log.warn("Missing required template variables for template: {}", templateName);
+        }
 
         // Process content with template engine
         String processedContent = templateEngine.processTemplate(template.getBody(), data);
@@ -88,6 +98,98 @@ public class NotificationService {
         }
     }
 
+    /**
+     * Process bulk notifications for multiple users
+     */
+    @Async("notificationExecutor")
+    @Transactional
+    public CompletableFuture<Map<String, Integer>> processBulkNotification(BulkNotificationRequest request) {
+        log.info("Processing bulk notification for {} users, type: {}", request.getUserIds().size(), request.getType());
+
+        String batchId = UUID.randomUUID().toString();
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger failedCount = new AtomicInteger(0);
+
+        // Get template
+        String templateName = mapEventToTemplate(request.getType());
+        Optional<NotificationTemplate> templateOpt = templateRepository.findByName(templateName);
+
+        if (templateOpt.isEmpty()) {
+            log.error("Template not found for notification type: {}", request.getType());
+            return CompletableFuture.completedFuture(Map.of(
+                    "total", request.getUserIds().size(),
+                    "success", 0,
+                    "failed", request.getUserIds().size()
+            ));
+        }
+
+        NotificationTemplate template = templateOpt.get();
+
+        // Process each user
+        for (Integer userId : request.getUserIds()) {
+            try {
+                // Merge common data with user-specific data
+                Map<String, Object> userData = new HashMap<>();
+                if (request.getCommonData() != null) {
+                    userData.putAll(request.getCommonData());
+                }
+                if (request.getUserSpecificData() != null && request.getUserSpecificData().containsKey(userId)) {
+                    userData.putAll(request.getUserSpecificData().get(userId));
+                }
+
+                // Get user preferences
+                Optional<NotificationPreference> preference = preferenceRepository.findByUserId(userId);
+
+                // Get user email (you might want to fetch this from a user service)
+                String email = userData.get("email") != null ? userData.get("email").toString() : null;
+
+                // Process template
+                String processedContent = templateEngine.processTemplate(template.getBody(), userData);
+                String processedSubject = template.getSubject() != null ?
+                        templateEngine.processTemplate(template.getSubject(), userData) : "";
+
+                // Send through requested channels
+                for (NotificationChannel channel : request.getChannels()) {
+                    if (shouldSendToChannel(preference, channel)) {
+                        Notification notification = Notification.builder()
+                                .recipientId(userId)
+                                .recipientEmail(email)
+                                .type(request.getType())
+                                .subject(processedSubject)
+                                .content(processedContent)
+                                .channel(channel)
+                                .template(template)
+                                .status(NotificationStatus.PENDING)
+                                .build();
+
+                        Notification saved = notificationRepository.save(notification);
+                        sendNotification(saved);
+                    }
+                }
+
+                successCount.incrementAndGet();
+            } catch (Exception e) {
+                log.error("Failed to process notification for user {}: {}", userId, e.getMessage());
+                failedCount.incrementAndGet();
+            }
+        }
+
+        // Publish bulk completion event
+        publishBulkNotificationCompletedEvent(batchId, request.getUserIds().size(),
+                successCount.get(), failedCount.get(), request.getType());
+
+        Map<String, Integer> result = Map.of(
+                "total", request.getUserIds().size(),
+                "success", successCount.get(),
+                "failed", failedCount.get()
+        );
+
+        log.info("Bulk notification completed. Batch: {}, Total: {}, Success: {}, Failed: {}",
+                batchId, request.getUserIds().size(), successCount.get(), failedCount.get());
+
+        return CompletableFuture.completedFuture(result);
+    }
+
     @Async
     public void sendNotification(Notification notification) {
         try {
@@ -95,11 +197,16 @@ public class NotificationService {
 
             switch (notification.getChannel()) {
                 case EMAIL:
-                    sent = emailService.sendEmail(
-                            notification.getRecipientEmail(),
-                            notification.getSubject(),
-                            notification.getContent()
-                    );
+                    if (notification.getRecipientEmail() != null) {
+                        sent = emailService.sendEmail(
+                                notification.getRecipientEmail(),
+                                notification.getSubject(),
+                                notification.getContent()
+                        );
+                    } else {
+                        log.warn("Cannot send email notification: recipient email is null for notification {}",
+                                notification.getId());
+                    }
                     break;
 
                 case SSE:
@@ -143,7 +250,6 @@ public class NotificationService {
         publishNotificationFailedEvent(notification, willRetry);
 
         if (willRetry) {
-            // Retry will be handled by scheduled method
             log.info("Notification {} scheduled for retry (attempt {})",
                     notification.getId(), notification.getRetryCount());
         }
@@ -215,6 +321,19 @@ public class NotificationService {
                 .errorMessage(notification.getErrorMessage())
                 .retryCount(notification.getRetryCount())
                 .willRetry(willRetry)
+                .build();
+        event.init();
+
+        kafkaTemplate.send(notificationEventsTopic, event);
+    }
+
+    private void publishBulkNotificationCompletedEvent(String batchId, int total, int success, int failed, String type) {
+        BulkNotificationCompletedEvent event = BulkNotificationCompletedEvent.builder()
+                .batchId(batchId)
+                .totalRecipients(total)
+                .successfulSent(success)
+                .failedSent(failed)
+                .notificationType(type)
                 .build();
         event.init();
 

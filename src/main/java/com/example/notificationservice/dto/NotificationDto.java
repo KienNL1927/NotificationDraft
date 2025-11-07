@@ -1,4 +1,3 @@
-// NotificationDto.java
 package com.example.notificationservice.dto;
 
 import com.example.notificationservice.enums.NotificationChannel;
@@ -9,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -16,7 +16,7 @@ import java.time.Instant;
 @AllArgsConstructor
 public class NotificationDto {
 
-    private Integer id;
+    private UUID id;
     private Integer recipientId;
     private String recipientEmail;
     private String recipientPhone;

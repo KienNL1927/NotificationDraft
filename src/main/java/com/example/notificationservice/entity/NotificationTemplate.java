@@ -1,5 +1,6 @@
 package com.example.notificationservice.entity;
 
+import com.example.notificationservice.enums.TemplateType;
 import com.vladmihalcea.hibernate.type.json.JsonType;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
@@ -10,6 +11,7 @@ import org.hibernate.annotations.Type;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.UUID;
 
 @Entity
 @Table(name = "notification_templates")
@@ -20,14 +22,15 @@ import java.util.Map;
 public class NotificationTemplate {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Integer id;
+    @GeneratedValue(strategy = GenerationType.AUTO)
+    private UUID id;
 
     @Column(nullable = false, unique = true, length = 100)
     private String name;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private String type;
+    private TemplateType type;
 
     @Column(length = 255)
     private String subject;

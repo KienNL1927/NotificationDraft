@@ -1,4 +1,3 @@
-// NotificationFailedEvent.java
 package com.example.notificationservice.event.outbound;
 
 import com.example.notificationservice.event.BaseEvent;
@@ -8,13 +7,15 @@ import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import lombok.experimental.SuperBuilder;
 
+import java.util.UUID;
+
 @Data
 @SuperBuilder
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = true)
 public class NotificationFailedEvent extends BaseEvent {
-    private Integer notificationId;
+    private UUID notificationId;
     private Integer recipientId;
     private String channel;
     private String errorMessage;

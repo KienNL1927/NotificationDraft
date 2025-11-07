@@ -11,6 +11,7 @@ import org.hibernate.annotations.Type;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.UUID;
 
 @Entity
 @Table(name = "notification_preferences")
@@ -21,8 +22,8 @@ import java.util.Map;
 public class NotificationPreference {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Integer id;
+    @GeneratedValue(strategy = GenerationType.AUTO)
+    private UUID id;
 
     @Column(name = "user_id", nullable = false, unique = true)
     private Integer userId;

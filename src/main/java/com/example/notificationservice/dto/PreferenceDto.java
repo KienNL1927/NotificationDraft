@@ -8,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.Map;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -15,7 +16,7 @@ import java.util.Map;
 @AllArgsConstructor
 public class PreferenceDto {
 
-    private Integer id;
+    private UUID id;
 
     @NotNull(message = "User ID is required")
     private Integer userId;
