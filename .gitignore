@@ -42,3 +42,4 @@ shutdown.sh
 .env.example
 .mvnw
 ./src/main/resources/application.yml
+mvnw.cmd
