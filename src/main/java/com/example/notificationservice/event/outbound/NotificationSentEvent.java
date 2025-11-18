@@ -1,6 +1,7 @@
 package com.example.notificationservice.event.outbound;
 
 import com.example.notificationservice.event.BaseEvent;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -14,6 +15,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = true)
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class NotificationSentEvent extends BaseEvent {
     private UUID notificationId;
     private Integer recipientId;

@@ -2,6 +2,7 @@
 package com.example.notificationservice.event.inbound;
 
 import com.example.notificationservice.event.BaseEvent;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -15,6 +16,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = true)
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class ProctoringViolationEvent extends BaseEvent {
     private Integer userId;
     private String username;

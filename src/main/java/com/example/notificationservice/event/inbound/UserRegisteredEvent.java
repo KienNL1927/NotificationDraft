@@ -1,6 +1,7 @@
 package com.example.notificationservice.event.inbound;
 
 import com.example.notificationservice.event.BaseEvent;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -11,6 +12,7 @@ import lombok.experimental.SuperBuilder;
 @SuperBuilder
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
 @EqualsAndHashCode(callSuper = true)
 public class UserRegisteredEvent extends BaseEvent {
     private Integer userId;

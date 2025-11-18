@@ -1,6 +1,7 @@
 // Base Event Class
 package com.example.notificationservice.event;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -13,6 +14,7 @@ import java.util.UUID;
 @SuperBuilder
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
 public abstract class BaseEvent {
     private String eventId;
     private Instant timestamp;

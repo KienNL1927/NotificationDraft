@@ -1,7 +1,7 @@
-// SessionCompletedEvent.java
 package com.example.notificationservice.event.inbound;
 
 import com.example.notificationservice.event.BaseEvent;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -13,6 +13,7 @@ import lombok.experimental.SuperBuilder;
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = true)
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class SessionCompletedEvent extends BaseEvent {
     private Integer userId;
     private String username;

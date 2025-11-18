@@ -2,6 +2,7 @@
 package com.example.notificationservice.event.outbound;
 
 import com.example.notificationservice.event.BaseEvent;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -13,6 +14,7 @@ import lombok.experimental.SuperBuilder;
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = true)
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class BulkNotificationCompletedEvent extends BaseEvent {
     private String batchId;
     private Integer totalRecipients;

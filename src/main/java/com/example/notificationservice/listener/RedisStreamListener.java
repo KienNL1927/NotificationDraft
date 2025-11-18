@@ -8,19 +8,18 @@ import com.example.notificationservice.event.inbound.UserRegisteredEvent;
 import com.example.notificationservice.service.NotificationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.connection.stream.Consumer;
-import org.springframework.data.redis.connection.stream.ObjectRecord;
-import org.springframework.data.redis.connection.stream.ReadOffset;
-import org.springframework.data.redis.connection.stream.StreamOffset;
+import org.springframework.data.redis.connection.stream.*;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.stream.StreamListener;
 import org.springframework.data.redis.stream.StreamMessageListenerContainer;
-import org.springframework.data.redis.stream.Subscription;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,10 +27,9 @@ import java.util.Map;
 @Component
 @RequiredArgsConstructor
 @Slf4j
-public class RedisStreamListener implements StreamListener<String, ObjectRecord<String, Object>> {
+public class RedisStreamListener {
 
     private final NotificationService notificationService;
-    private final StreamMessageListenerContainer<String, ObjectRecord<String, Object>> listenerContainer;
     private final RedisTemplate<String, Object> redisTemplate;
     private final ObjectMapper objectMapper;
 
@@ -50,72 +48,113 @@ public class RedisStreamListener implements StreamListener<String, ObjectRecord<
     @Value("${app.redis.consumer.name}")
     private String consumerName;
 
+    private volatile boolean running = true;
+
     @PostConstruct
-    public void subscribeToStreams() throws InterruptedException {
-        // Create consumer groups if they don't exist
+    public void initialize() {
+        // Create consumer groups for all streams
         createConsumerGroupIfNotExists(userEventsStream);
         createConsumerGroupIfNotExists(assessmentEventsStream);
         createConsumerGroupIfNotExists(proctoringEventsStream);
 
-        // Subscribe to streams
-        subscribeToStream(userEventsStream);
-        subscribeToStream(assessmentEventsStream);
-        subscribeToStream(proctoringEventsStream);
-
-        log.info("Subscribed to Redis Streams: {}, {}, {}",
+        log.info("Redis Stream Listener initialized for streams: {}, {}, {}",
                 userEventsStream, assessmentEventsStream, proctoringEventsStream);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        running = false;
+        log.info("Redis Stream Listener shutting down...");
+    }
+
+    /**
+     * Poll messages from all streams every second
+     */
+    @Scheduled(fixedDelay = 1000)
+    public void pollMessages() {
+        if (!running) {
+            return;
+        }
+
+        try {
+            // Poll from each stream
+            pollFromStream(userEventsStream, this::handleUserEvent);
+            pollFromStream(assessmentEventsStream, this::handleAssessmentEvent);
+            pollFromStream(proctoringEventsStream, this::handleProctoringEvent);
+        } catch (Exception e) {
+            log.error("Error polling messages from Redis streams: {}", e.getMessage(), e);
+        }
+    }
+
+    private void pollFromStream(String streamKey, MessageHandler handler) {
+        try {
+            // Read messages from the stream for this consumer group
+            List<MapRecord<String, Object, Object>> messages = redisTemplate.opsForStream()
+                    .read(
+                            Consumer.from(consumerGroup, consumerName),
+                            StreamReadOptions.empty().count(10).block(Duration.ofSeconds(1)),
+                            StreamOffset.create(streamKey, ReadOffset.lastConsumed())
+                    );
+
+            if (messages != null && !messages.isEmpty()) {
+                for (MapRecord<String, Object, Object> message : messages) {
+                    try {
+                        log.debug("Processing message from stream '{}': {}", streamKey, message.getId());
+
+                        // Convert map to object
+                        Map<Object, Object> value = message.getValue();
+                        handler.handle(value);
+
+                        // Acknowledge the message
+                        redisTemplate.opsForStream().acknowledge(consumerGroup, message);
+
+                    } catch (Exception e) {
+                        log.error("Error processing message from stream '{}': {}", streamKey, e.getMessage(), e);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // This is normal when no messages are available, don't log as error
+            log.trace("No messages available from stream '{}': {}", streamKey, e.getMessage());
+        }
     }
 
     private void createConsumerGroupIfNotExists(String streamKey) {
         try {
+            // Try to create the consumer group
             redisTemplate.opsForStream().createGroup(streamKey, consumerGroup);
             log.info("Created consumer group '{}' for stream '{}'", consumerGroup, streamKey);
         } catch (Exception e) {
-            // Group likely already exists, which is fine
-            log.debug("Consumer group '{}' may already exist for stream '{}': {}",
+            // Group might already exist or stream doesn't exist yet, both are fine
+            log.debug("Consumer group '{}' setup for stream '{}': {}",
                     consumerGroup, streamKey, e.getMessage());
-        }
-    }
 
-    private void subscribeToStream(String streamKey) throws InterruptedException {
-        Subscription subscription = listenerContainer.receive(
-                Consumer.from(consumerGroup, consumerName),
-                StreamOffset.create(streamKey, ReadOffset.lastConsumed()),
-                this
-        );
-        subscription.await(java.time.Duration.ofSeconds(2));
-    }
-
-    @Override
-    public void onMessage(ObjectRecord<String, Object> message) {
-        String streamKey = message.getStream();
-        Object value = message.getValue();
-
-        try {
-            log.debug("Received message from stream '{}': {}", streamKey, value);
-
-            // Route to appropriate handler based on stream
-            if (streamKey.equals(userEventsStream)) {
-                handleUserEvent(value);
-            } else if (streamKey.equals(assessmentEventsStream)) {
-                handleAssessmentEvent(value);
-            } else if (streamKey.equals(proctoringEventsStream)) {
-                handleProctoringEvent(value);
+            // If stream doesn't exist, create it with a dummy message
+            try {
+                redisTemplate.opsForStream().createGroup(streamKey, ReadOffset.from("0"), consumerGroup);
+                log.info("Created stream '{}' and consumer group '{}'", streamKey, consumerGroup);
+            } catch (Exception ex) {
+                log.trace("Stream and group may already exist: {}", ex.getMessage());
             }
-
-            // Acknowledge the message
-            redisTemplate.opsForStream().acknowledge(consumerGroup, message);
-
-        } catch (Exception e) {
-            log.error("Error processing message from stream '{}': {}", streamKey, e.getMessage(), e);
-            // In production, you might want to move failed messages to a dead-letter queue
         }
     }
 
-    private void handleUserEvent(Object value) {
+    @FunctionalInterface
+    private interface MessageHandler {
+        void handle(Map<Object, Object> value) throws Exception;
+    }
+
+    private void handleUserEvent(Map<Object, Object> value) {
         try {
-            // Convert to UserRegisteredEvent
-            UserRegisteredEvent event = objectMapper.convertValue(value, UserRegisteredEvent.class);
+            // Convert map to clean Map<String, Object>
+            log.debug("RAW Redis data: {}", value);
+
+            Map<String, Object> cleanedValue = cleanMap(value);
+            log.debug("CLEANED data: {}", cleanedValue);
+
+            UserRegisteredEvent event = objectMapper.convertValue(cleanedValue, UserRegisteredEvent.class);
+            log.debug("PARSED event: userId={}, email={}, firstName={}",
+                    event.getUserId(), event.getEmail(), event.getFirstName());
 
             log.info("Processing user.registered event for user: {}", event.getUserId());
 
@@ -137,14 +176,12 @@ public class RedisStreamListener implements StreamListener<String, ObjectRecord<
         }
     }
 
-    private void handleAssessmentEvent(Object value) {
+    private void handleAssessmentEvent(Map<Object, Object> value) {
         try {
-            Map<String, Object> eventMap = objectMapper.convertValue(value, Map.class);
-
             // Check if it's a SessionCompletedEvent or AssessmentPublishedEvent
-            if (eventMap.containsKey("sessionId")) {
+            if (value.containsKey("sessionId")) {
                 handleSessionCompleted(value);
-            } else if (eventMap.containsKey("assignedUsers")) {
+            } else if (value.containsKey("assignedUsers")) {
                 handleAssessmentPublished(value);
             }
         } catch (Exception e) {
@@ -152,9 +189,10 @@ public class RedisStreamListener implements StreamListener<String, ObjectRecord<
         }
     }
 
-    private void handleSessionCompleted(Object value) {
+    private void handleSessionCompleted(Map<Object, Object> value) {
         try {
-            SessionCompletedEvent event = objectMapper.convertValue(value, SessionCompletedEvent.class);
+            Map<String, Object> cleanedValue = cleanMap(value);
+            SessionCompletedEvent event = objectMapper.convertValue(cleanedValue, SessionCompletedEvent.class);
 
             log.info("Processing session.completed event for user: {}", event.getUserId());
 
@@ -177,9 +215,10 @@ public class RedisStreamListener implements StreamListener<String, ObjectRecord<
         }
     }
 
-    private void handleAssessmentPublished(Object value) {
+    private void handleAssessmentPublished(Map<Object, Object> value) {
         try {
-            AssessmentPublishedEvent event = objectMapper.convertValue(value, AssessmentPublishedEvent.class);
+            Map<String, Object> cleanedValue = cleanMap(value);
+            AssessmentPublishedEvent event = objectMapper.convertValue(cleanedValue, AssessmentPublishedEvent.class);
 
             log.info("Processing assessment.published event for assessment: {}", event.getAssessmentId());
 
@@ -205,9 +244,10 @@ public class RedisStreamListener implements StreamListener<String, ObjectRecord<
         }
     }
 
-    private void handleProctoringEvent(Object value) {
+    private void handleProctoringEvent(Map<Object, Object> value) {
         try {
-            ProctoringViolationEvent event = objectMapper.convertValue(value, ProctoringViolationEvent.class);
+            Map<String, Object> cleanedValue = cleanMap(value);
+            ProctoringViolationEvent event = objectMapper.convertValue(cleanedValue, ProctoringViolationEvent.class);
 
             log.info("Processing proctoring.violation event for session: {}", event.getSessionId());
 
@@ -215,21 +255,39 @@ public class RedisStreamListener implements StreamListener<String, ObjectRecord<
             data.put("username", event.getUsername());
             data.put("sessionId", event.getSessionId());
             data.put("violationType", event.getViolationType());
-            data.put("timestamp", event.getTimestamp().toString());
+            data.put("timestamp", event.getTimestamp() != null ? event.getTimestamp().toString() : Instant.now().toString());
             data.put("severity", event.getSeverity());
 
-            // Notify proctors via SSE and Email
-            for (Integer proctorId : event.getProctorIds()) {
-                notificationService.processNotification(
-                        "proctoring.violation",
-                        proctorId,
-                        null,
-                        data,
-                        List.of(NotificationChannel.SSE, NotificationChannel.EMAIL)
-                );
+            if (event.getProctorIds() != null && !event.getProctorIds().isEmpty()) {  // ← Added null check
+                for (Integer proctorId : event.getProctorIds()) {
+                    notificationService.processNotification(
+                            "proctoring.violation",
+                            proctorId,
+                            null,
+                            data,
+                            List.of(NotificationChannel.SSE, NotificationChannel.EMAIL)
+                    );
+                }
+            } else {
+                log.warn("No proctor IDs found for proctoring violation event");
             }
         } catch (Exception e) {
             log.error("Failed to handle proctoring event: {}", e.getMessage(), e);
         }
+    }
+
+    /**
+     * Clean map by converting all keys to strings and filtering out unwanted fields
+     */
+    private Map<String, Object> cleanMap(Map<Object, Object> original) {
+        Map<String, Object> cleaned = new HashMap<>();
+        for (Map.Entry<Object, Object> entry : original.entrySet()) {
+            String key = entry.getKey().toString();
+            // Skip the "init" field and other non-data fields
+            if (!key.equals("init") && !key.startsWith("_")) {
+                cleaned.put(key, entry.getValue());
+            }
+        }
+        return cleaned;
     }
 }

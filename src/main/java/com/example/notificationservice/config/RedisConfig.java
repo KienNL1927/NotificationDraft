@@ -9,15 +9,11 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
-import org.springframework.data.redis.connection.stream.ObjectRecord;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
-import org.springframework.data.redis.stream.StreamMessageListenerContainer;
-import org.springframework.data.redis.stream.StreamMessageListenerContainer.StreamMessageListenerContainerOptions;
-
-import java.time.Duration;
 
 @Configuration
 @RequiredArgsConstructor
@@ -85,20 +81,8 @@ public class RedisConfig {
     }
 
     @Bean
-    public StreamMessageListenerContainer<String, ObjectRecord<String, Object>> streamMessageListenerContainer(
-            RedisConnectionFactory connectionFactory) {
-
-        StreamMessageListenerContainerOptions<String, ObjectRecord<String, Object>> options =
-                StreamMessageListenerContainerOptions
-                        .builder()
-                        .pollTimeout(Duration.ofSeconds(1))
-                        .build();
-
-        StreamMessageListenerContainer<String, ObjectRecord<String, Object>> container =
-                StreamMessageListenerContainer.create(connectionFactory, options);
-
-        container.start();
-        return container;
+    public StringRedisTemplate stringRedisTemplate(RedisConnectionFactory connectionFactory) {
+        return new StringRedisTemplate(connectionFactory);
     }
 
     // Stream names as beans for easy injection
