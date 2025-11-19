@@ -6,32 +6,33 @@ services:
     image: postgres:16-alpine
     container_name: notification-db
     environment:
-      POSTGRES_DB: notification_db
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: 123456
+      POSTGRES_DB: ${DATABASE_NAME}
+      POSTGRES_USER: ${DATABASE_USERNAME}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
     ports:
-      - "5432:5432"
+      - "${DATABASE_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - notification-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U notification_user -d notification_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME:-admin} -d ${DATABASE_NAME:-notification_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   # Redis with Streams support
   redis:
     image: redis/redis-stack:latest
     container_name: notification-redis
     ports:
-      - "6379:6379"      # Redis
-      - "8001:8001"      # RedisInsight (Redis GUI)
+      - "${REDIS_PORT:-6379}:6379"      # Redis
+      - "${REDIS_INSIGHT_PORT:-8001}:8001"      # RedisInsight (Redis GUI)
     volumes:
       - redis_data:/data
     environment:
-      - REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy allkeys-lru
+      - REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy allkeys-lru ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
     networks:
       - notification-network
     healthcheck:
@@ -41,16 +42,73 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # MailHog for email testing
+  # MailHog for email testing (alternative to Mailtrap)
   mailhog:
     image: mailhog/mailhog:latest
     container_name: notification-mailhog
     ports:
-      - "1025:1025"      # SMTP server
-      - "8025:8025"      # Web UI
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"      # SMTP server
+      - "${MAILHOG_WEB_PORT:-8025}:8025"       # Web UI
     networks:
       - notification-network
     restart: unless-stopped
+
+#  # Notification Service Application
+#  notification-service:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile
+#    container_name: notification-service-app
+#    depends_on:
+#      postgres:
+#        condition: service_healthy
+#      redis:
+#        condition: service_healthy
+#    environment:
+#      # Spring Profile
+#      SPRING_PROFILE: ${SPRING_PROFILE}
+#
+#      # Database
+#      DATABASE_URL: jdbc:postgresql://postgres:5432/${DATABASE_NAME:-notification_db}
+#      DATABASE_USERNAME: ${DATABASE_USERNAME:-admin}
+#      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-changeme}
+#
+#      # Redis
+#      REDIS_HOST: redis
+#      REDIS_PORT: 6379
+#      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+#
+#      # Mail Configuration (use MailHog by default)
+#      MAIL_HOST: ${MAIL_HOST:-mailhog}
+#      MAIL_PORT: ${MAIL_PORT:-1025}
+#      MAIL_USERNAME: ${MAIL_USERNAME:-}
+#      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+#      MAIL_FROM: ${MAIL_FROM:-noreply@examplatform.com}
+#      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Exam Platform}
+#
+#      # Casdoor OAuth2
+#      CASDOOR_ISSUER_URI: ${CASDOOR_ISSUER_URI}
+#      CASDOOR_JWK_URI: ${CASDOOR_JWK_URI}
+#
+#      # Server
+#      SERVER_PORT: 8082
+#
+#      # Logging
+#      LOG_LEVEL_ROOT: ${LOG_LEVEL_ROOT:-INFO}
+#      LOG_LEVEL_APP: ${LOG_LEVEL_APP:-DEBUG}
+#    ports:
+#      - "${SERVER_PORT:-8082}:8082"
+#    networks:
+#      - notification-network
+#    volumes:
+#      - ./logs:/app/logs
+#    restart: unless-stopped
+#    healthcheck:
+#      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/actuator/health"]
+#      interval: 30s
+#      timeout: 10s
+#      retries: 3
+#      start_period: 60s
 
 volumes:
   postgres_data:

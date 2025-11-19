@@ -36,7 +36,7 @@ public class SecurityConfig {
     @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}")
     private String jwkSetUri;
 
-    // === 1) Chain cho ACTUATOR: permitAll, không đụng JWT ===
+    // === 1) Chain cho ACTUATOR: permitAll ===
     @Bean
     @Order(0)
     public SecurityFilterChain actuatorChain(HttpSecurity http) throws Exception {
@@ -59,24 +59,26 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authz -> authz
-                        // public
+                        // public endpoints
                         .requestMatchers("/ws/**", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
 
-                        // admin
+                        // admin endpoints
                         .requestMatchers("/api/v1/templates/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/v1/redis/test/**").hasRole("ADMIN")
 
-                        // user
+                        // user endpoints
                         .requestMatchers("/api/v1/preferences/**").authenticated()
                         .requestMatchers("/api/v1/sse/**").authenticated()
+                        .requestMatchers("/api/v1/auth/test/**").authenticated()
 
-                        // còn lại
+                        // any other request requires authentication
                         .anyRequest().authenticated()
                 )
-//                .oauth2ResourceServer(oauth2 -> oauth2
-//                        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
-                .oauth2ResourceServer(oauth2 -> oauth2.disable())
-            ;
+                // ENABLE OAuth2 JWT validation
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
+                );
         return http.build();
     }
 
@@ -86,51 +88,51 @@ public class SecurityConfig {
         return NimbusJwtDecoder.withJwkSetUri(jwkSetUri).build();
     }
 
-    // === Converter: scopes + Casdoor roles (object array) + tag/isAdmin ===
+    // === JWT Authentication Converter ===
     @Bean
     public JwtAuthenticationConverter jwtAuthenticationConverter() {
-        // Scopes chuẩn (scope/scp) -> SCOPE_*
+        // Standard scopes converter
         JwtGrantedAuthoritiesConverter scopesConverter = new JwtGrantedAuthoritiesConverter();
         scopesConverter.setAuthoritiesClaimName("scope");
         scopesConverter.setAuthorityPrefix("SCOPE_");
 
         Converter<Jwt, Collection<GrantedAuthority>> custom = jwt -> {
-            List<GrantedAuthority> out = new ArrayList<>();
+            List<GrantedAuthority> authorities = new ArrayList<>();
 
-            // 1) scopes từ "scope"
-            out.addAll(scopesConverter.convert(jwt));
+            // 1) Add scopes from "scope" claim
+            authorities.addAll(scopesConverter.convert(jwt));
 
-            // 1b) thêm từ "scp" nếu có
+            // 1b) Add scopes from "scp" claim if present
             Object scp = jwt.getClaims().get("scp");
             if (scp instanceof Collection<?> c) {
                 for (Object it : c) {
                     if (it instanceof String s && !s.isBlank()) {
-                        out.add(new SimpleGrantedAuthority("SCOPE_" + s));
+                        authorities.add(new SimpleGrantedAuthority("SCOPE_" + s));
                     }
                 }
             } else if (scp instanceof String s) {
                 for (String p : s.split("\\s+|,")) {
-                    if (!p.isBlank()) out.add(new SimpleGrantedAuthority("SCOPE_" + p.trim()));
+                    if (!p.isBlank()) authorities.add(new SimpleGrantedAuthority("SCOPE_" + p.trim()));
                 }
             }
 
-            // 2) roles từ Casdoor: [{ "name": "Admin", ... }] hoặc [{ "NAME": "ADMIN", ... }]
+            // 2) Extract roles from Casdoor's "roles" claim
             Object rolesObj = jwt.getClaims().get("roles");
-            normalizeRoles(rolesObj).forEach(r -> out.add(new SimpleGrantedAuthority(r)));
+            normalizeRoles(rolesObj).forEach(r -> authorities.add(new SimpleGrantedAuthority(r)));
 
-            // 3) Casdoor-specific: tag/isAdmin
+            // 3) Check Casdoor-specific fields: tag, isAdmin
             String tag = jwt.getClaimAsString("tag");
             Boolean isAdmin = jwt.getClaim("isAdmin");
             if ("staff".equalsIgnoreCase(tag) || "admin".equalsIgnoreCase(tag) || Boolean.TRUE.equals(isAdmin)) {
-                out.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
+                authorities.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
             }
 
-            // 4) nếu chưa có ROLE_* nào, thêm ROLE_USER
-            boolean hasRole = out.stream().anyMatch(a -> a.getAuthority().startsWith("ROLE_"));
-            if (!hasRole) out.add(new SimpleGrantedAuthority("ROLE_USER"));
+            // 4) Default role if none found
+            boolean hasRole = authorities.stream().anyMatch(a -> a.getAuthority().startsWith("ROLE_"));
+            if (!hasRole) authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
 
-            // loại trùng lặp
-            return out.stream().distinct().collect(Collectors.toList());
+            // Remove duplicates
+            return authorities.stream().distinct().collect(Collectors.toList());
         };
 
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
@@ -138,21 +140,26 @@ public class SecurityConfig {
         return converter;
     }
 
-    // === CORS ===
+    // === CORS Configuration ===
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration cfg = new CorsConfiguration();
-        cfg.setAllowedOrigins(List.of("*"));
+        cfg.setAllowedOriginPatterns(List.of("*")); // Use patterns instead of origins
         cfg.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         cfg.setAllowedHeaders(List.of("*"));
-        cfg.setAllowCredentials(false);
+        cfg.setAllowCredentials(true);
+        cfg.setMaxAge(3600L);
+
         UrlBasedCorsConfigurationSource src = new UrlBasedCorsConfigurationSource();
         src.registerCorsConfiguration("/**", cfg);
         return src;
     }
 
-    // ==== Helpers ====
-    /** Chuyển mọi dạng claim "roles" về danh sách ROLE_* - CASE INSENSITIVE */
+    // ==== Helper Methods ====
+
+    /**
+     * Normalize roles claim to ROLE_* format (case insensitive)
+     */
     private static List<String> normalizeRoles(Object rolesClaim) {
         List<String> out = new ArrayList<>();
         if (rolesClaim instanceof Collection<?> coll) {
@@ -160,7 +167,7 @@ public class SecurityConfig {
                 if (it instanceof String s) {
                     addRole(out, s);
                 } else if (it instanceof Map<?,?> m) {
-                    // FIXED: Case-insensitive key lookup for Casdoor
+                    // Case-insensitive key lookup
                     Object v = getMapValueIgnoreCase(m, "name", "role", "authority",
                             "value", "code", "key", "displayname");
                     if (v instanceof String s) {
@@ -176,10 +183,8 @@ public class SecurityConfig {
 
     /**
      * Get value from map with case-insensitive key lookup
-     * Tries each key in order, returns first non-null value
      */
     private static Object getMapValueIgnoreCase(Map<?,?> map, String... keys) {
-        // Create a case-insensitive lookup map
         Map<String, Object> lowerCaseMap = new HashMap<>();
         for (Map.Entry<?, ?> entry : map.entrySet()) {
             if (entry.getKey() instanceof String key) {
@@ -187,7 +192,6 @@ public class SecurityConfig {
             }
         }
 
-        // Try each key
         for (String key : keys) {
             Object value = lowerCaseMap.get(key.toLowerCase(Locale.ROOT));
             if (value != null) {
@@ -207,17 +211,12 @@ public class SecurityConfig {
         String r = name.trim();
         if (r.isEmpty()) return null;
 
-        // Remove non-alphanumeric characters and convert to uppercase
+        // Remove non-alphanumeric and convert to uppercase
         r = r.replaceAll("[^a-zA-Z0-9]+", "_").toUpperCase(Locale.ROOT);
 
         // Ensure ROLE_ prefix
         if (!r.startsWith("ROLE_")) r = "ROLE_" + r;
 
         return r;
-    }
-
-    private static Object firstNonNull(Object... arr) {
-        for (Object o : arr) if (o != null) return o;
-        return null;
     }
 }

@@ -1,0 +1,136 @@
+spring:
+  application:
+    name: notification-service
+
+  profiles:
+    active: ${SPRING_PROFILE:local}
+
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USERNAME}
+    password: ${DATABASE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE}
+      minimum-idle: ${DB_POOL_MIN_IDLE:5}
+      connection-timeout: ${DB_CONNECTION_TIMEOUT}
+
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO}
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          lob:
+            non_contextual_creation: true
+    show-sql: ${JPA_SHOW_SQL:false}
+
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}
+      password: ${REDIS_PASSWORD:}
+      timeout: ${REDIS_TIMEOUT}
+      lettuce:
+        pool:
+          max-active: ${REDIS_POOL_MAX_ACTIVE}
+          max-idle: ${REDIS_POOL_MAX_IDLE}
+          min-idle: ${REDIS_POOL_MIN_IDLE}
+          max-wait: ${REDIS_POOL_MAX_WAIT}
+
+  flyway:
+    enabled: ${FLYWAY_ENABLED}
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+  mail:
+    host: ${MAIL_HOST}
+    port: ${MAIL_PORT}
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: false
+          connectiontimeout: ${MAIL_CONNECTION_TIMEOUT}
+          timeout: ${MAIL_TIMEOUT}
+          writetimeout: ${MAIL_WRITE_TIMEOUT}
+
+  task:
+    scheduling:
+      pool:
+        size: ${SCHEDULING_POOL_SIZE}
+
+  # OAuth2 Resource Server Configuration for Casdoor
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${CASDOOR_ISSUER_URI}
+          jwk-set-uri: ${CASDOOR_JWK_URI}
+
+  # MVC settings for SSE support
+  mvc:
+    async:
+      request-timeout: ${MVC_ASYNC_TIMEOUT}
+
+server:
+  port: ${SERVER_PORT}
+  servlet:
+    context-path: /notification-service
+  tomcat:
+    connection-timeout: ${TOMCAT_CONNECTION_TIMEOUT}
+    max-connections: ${TOMCAT_MAX_CONNECTIONS}
+    accept-count: ${TOMCAT_ACCEPT_COUNT}
+
+logging:
+  level:
+    root: ${LOG_LEVEL_ROOT}
+    com.example.notificationservice: ${LOG_LEVEL_APP}
+  file:
+    name: ${LOG_FILE_NAME}
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include:
+          - health
+          - info
+          - metrics
+          - prometheus
+  endpoint:
+    health:
+      show-details: always
+
+app:
+  notification:
+    retry:
+      max-attempts: ${NOTIFICATION_RETRY_MAX_ATTEMPTS}
+      delay-ms: ${NOTIFICATION_RETRY_DELAY_MS}
+
+    sse:
+      timeout-ms: ${SSE_TIMEOUT_MS:86400000}
+      heartbeat-interval-ms: ${SSE_HEARTBEAT_INTERVAL_MS}
+      connection-limit-per-user: ${SSE_CONNECTION_LIMIT}
+
+    email:
+      from: ${MAIL_FROM}
+      from-name: ${MAIL_FROM_NAME}
+
+  redis:
+    streams:
+      user-events: ${REDIS_STREAM_USER_EVENTS}
+      assessment-events: ${REDIS_STREAM_ASSESSMENT_EVENTS}
+      proctoring-events: ${REDIS_STREAM_PROCTORING_EVENTS}
+      notification-events: ${REDIS_STREAM_NOTIFICATION_EVENTS}
+    consumer:
+      group-id: ${REDIS_CONSUMER_GROUP_ID}
+      name: ${REDIS_CONSUMER_NAME}

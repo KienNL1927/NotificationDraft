@@ -52,6 +52,9 @@ public class NotificationService {
     public void processNotification(String eventType, Integer userId, String email,
                                     Map<String, Object> data, List<NotificationChannel> channels) {
 
+        log.info("Processing notification - Type: {}, User: {}, Email: {}, Channels: {}",
+                eventType, userId, email, channels);
+
         // Check user preferences
         Optional<NotificationPreference> preference = preferenceRepository.findByUserId(userId);
 
@@ -60,15 +63,16 @@ public class NotificationService {
         Optional<NotificationTemplate> templateOpt = templateRepository.findByName(templateName);
 
         if (templateOpt.isEmpty()) {
-            log.error("Template not found for event type: {}", eventType);
+            log.error("❌ Template not found for event type: {} (template name: {})", eventType, templateName);
             return;
         }
 
         NotificationTemplate template = templateOpt.get();
+        log.debug("Found template: {} for event type: {}", templateName, eventType);
 
         // Validate template data
         if (!templateEngine.validateTemplateData(template.getBody(), data)) {
-            log.warn("Missing required template variables for template: {}", templateName);
+            log.warn("⚠️ Missing required template variables for template: {}", templateName);
         }
 
         // Process content with template engine
@@ -76,23 +80,28 @@ public class NotificationService {
         String processedSubject = template.getSubject() != null ?
                 templateEngine.processTemplate(template.getSubject(), data) : "";
 
-        // Create notification record
-        Notification notification = Notification.builder()
-                .recipientId(userId)
-                .recipientEmail(email)
-                .type(eventType)
-                .subject(processedSubject)
-                .content(processedContent)
-                .template(template)
-                .status(NotificationStatus.PENDING)
-                .build();
+        log.debug("Processed subject: {}", processedSubject);
 
-        // Send through appropriate channels based on preferences
+        // Create notification record and send through appropriate channels
         for (NotificationChannel channel : channels) {
             if (shouldSendToChannel(preference, channel)) {
-                notification.setChannel(channel);
+                log.info("Sending notification via channel: {}", channel);
+
+                Notification notification = Notification.builder()
+                        .recipientId(userId)
+                        .recipientEmail(email)
+                        .type(eventType)
+                        .subject(processedSubject)
+                        .content(processedContent)
+                        .template(template)
+                        .channel(channel)
+                        .status(NotificationStatus.PENDING)
+                        .build();
+
                 Notification saved = notificationRepository.save(notification);
                 sendNotification(saved);
+            } else {
+                log.info("Skipping channel {} due to user preferences", channel);
             }
         }
     }
@@ -192,41 +201,60 @@ public class NotificationService {
     @Async
     public void sendNotification(Notification notification) {
         try {
+            log.info("Sending notification {} via channel: {}", notification.getId(), notification.getChannel());
             boolean sent = false;
 
             switch (notification.getChannel()) {
                 case EMAIL:
                     if (notification.getRecipientEmail() != null) {
-                        sent = emailService.sendEmail(
+                        log.info("Sending email to: {}", notification.getRecipientEmail());
+                        // Use CompletableFuture to handle async result
+                        emailService.sendEmail(
                                 notification.getRecipientEmail(),
                                 notification.getSubject(),
                                 notification.getContent()
-                        );
+                        ).thenAccept(result -> {
+                            if (result) {
+                                updateNotificationStatus(notification, NotificationStatus.SENT);
+                                publishNotificationSentEvent(notification);
+                            } else {
+                                handleFailedNotification(notification, "Failed to send email");
+                            }
+                        }).exceptionally(ex -> {
+                            log.error("Email sending exception: {}", ex.getMessage());
+                            handleFailedNotification(notification, ex.getMessage());
+                            return null;
+                        });
+
+                        // Consider it sent for now (will be updated by callback)
+                        sent = true;
                     } else {
                         log.warn("Cannot send email notification: recipient email is null for notification {}",
                                 notification.getId());
+                        handleFailedNotification(notification, "Recipient email is null");
                     }
                     break;
 
                 case SSE:
+                    log.info("Sending SSE notification to user: {}", notification.getRecipientId());
                     sent = sseEmitterService.sendToUser(
                             notification.getRecipientId(),
                             notification.getType(),
                             notification.getContent()
                     );
+
+                    if (sent) {
+                        updateNotificationStatus(notification, NotificationStatus.SENT);
+                        publishNotificationSentEvent(notification);
+                    } else {
+                        handleFailedNotification(notification, "User not connected to SSE");
+                    }
                     break;
 
                 case PUSH:
-                    // Push notification implementation would go here
                     log.warn("Push channel not implemented yet");
+                    handleFailedNotification(notification, "Push channel not implemented");
                     break;
-            }
-
-            if (sent) {
-                updateNotificationStatus(notification, NotificationStatus.SENT);
-                publishNotificationSentEvent(notification);
-            } else {
-                handleFailedNotification(notification, "Failed to send notification");
             }
 
         } catch (Exception e) {
@@ -243,15 +271,15 @@ public class NotificationService {
 
         if (!willRetry) {
             notification.setStatus(NotificationStatus.FAILED);
+            log.error("❌ Notification {} permanently failed after {} attempts",
+                    notification.getId(), notification.getRetryCount());
+        } else {
+            log.info("⚠️ Notification {} will be retried (attempt {})",
+                    notification.getId(), notification.getRetryCount());
         }
 
         notificationRepository.save(notification);
         publishNotificationFailedEvent(notification, willRetry);
-
-        if (willRetry) {
-            log.info("Notification {} scheduled for retry (attempt {})",
-                    notification.getId(), notification.getRetryCount());
-        }
     }
 
     @Scheduled(fixedDelayString = "${app.notification.retry.delay-ms}")
@@ -259,9 +287,14 @@ public class NotificationService {
         List<Notification> failedNotifications = notificationRepository
                 .findByStatusAndRetryCountLessThan(NotificationStatus.PENDING, maxRetryAttempts);
 
-        for (Notification notification : failedNotifications) {
-            log.info("Retrying notification {}", notification.getId());
-            sendNotification(notification);
+        if (!failedNotifications.isEmpty()) {
+            log.info("Retrying {} failed notifications", failedNotifications.size());
+
+            for (Notification notification : failedNotifications) {
+                log.info("Retrying notification {} (attempt {})",
+                        notification.getId(), notification.getRetryCount() + 1);
+                sendNotification(notification);
+            }
         }
     }
 
@@ -272,30 +305,37 @@ public class NotificationService {
             notification.setDeliveredAt(Instant.now());
         }
         notificationRepository.save(notification);
+        log.info("✅ Notification {} status updated to: {}", notification.getId(), status);
     }
 
     private boolean shouldSendToChannel(Optional<NotificationPreference> preference,
                                         NotificationChannel channel) {
         if (preference.isEmpty()) {
-            return true; // Default to sending if no preference
+            log.debug("No preferences found, defaulting to enabled for channel: {}", channel);
+            return true;
         }
 
         NotificationPreference pref = preference.get();
-        return switch (channel) {
+        boolean enabled = switch (channel) {
             case EMAIL -> pref.getEmailEnabled();
             case SSE -> pref.getSseEnabled();
             case PUSH -> pref.getPushEnabled();
         };
+
+        log.debug("Channel {} enabled: {}", channel, enabled);
+        return enabled;
     }
 
     private String mapEventToTemplate(String eventType) {
-        return switch (eventType) {
+        String templateName = switch (eventType) {
             case "user.registered" -> "welcome_user";
             case "session.completed" -> "session_completion";
             case "proctoring.violation" -> "proctoring_alert";
             case "assessment.published" -> "new_assessment_assigned";
             default -> eventType.replace(".", "_");
         };
+        log.debug("Mapped event type '{}' to template '{}'", eventType, templateName);
+        return templateName;
     }
 
     private void publishNotificationSentEvent(Notification notification) {
