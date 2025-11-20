@@ -6,6 +6,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -20,17 +24,50 @@ public class SseController {
 
     private final SseEmitterService sseEmitterService;
     private final CasdoorAuthenticationContext authContext;
+    private final JwtDecoder jwtDecoder;
 
     /**
      * Establish SSE connection for user notifications
+     * Accepts JWT token as query parameter for EventSource compatibility
      */
     @GetMapping(value = "/connect", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter connect() {
-        Integer userId = authContext.getCurrentUserId().orElse(null);
-        String username = authContext.getCurrentUsername().orElse("unknown");
+    public SseEmitter connect(@RequestParam(required = false) String token) {
+        Integer userId;
+        String username;
 
-        if (userId == null) {
-            log.error("No userId found in authentication context");
+        // Try to get auth from context first (if using Authorization header)
+        if (authContext.getCurrentUserId().isPresent()) {
+            userId = authContext.getCurrentUserId().get();
+            username = authContext.getCurrentUsername().orElse("unknown");
+        }
+        // Fall back to token query parameter
+        else if (token != null && !token.isEmpty()) {
+            try {
+                Jwt jwt = jwtDecoder.decode(token);
+
+                // Set authentication in context temporarily
+                UsernamePasswordAuthenticationToken auth =
+                        new UsernamePasswordAuthenticationToken(jwt, null, null);
+                SecurityContextHolder.getContext().setAuthentication(auth);
+
+                userId = authContext.getCurrentUserId().orElse(null);
+                username = authContext.getCurrentUsername().orElse("unknown");
+
+                if (userId == null) {
+                    log.error("Could not extract userId from JWT token");
+                    SseEmitter emitter = new SseEmitter(0L);
+                    emitter.completeWithError(new IllegalStateException("Invalid token"));
+                    return emitter;
+                }
+            } catch (Exception e) {
+                log.error("Invalid JWT token: {}", e.getMessage());
+                SseEmitter emitter = new SseEmitter(0L);
+                emitter.completeWithError(new IllegalStateException("Invalid token"));
+                return emitter;
+            }
+        }
+        else {
+            log.error("No authentication found - neither header nor query parameter");
             SseEmitter emitter = new SseEmitter(0L);
             emitter.completeWithError(new IllegalStateException("Authentication required"));
             return emitter;
@@ -44,8 +81,11 @@ public class SseController {
      * Subscribe to a specific topic for broadcast messages
      */
     @GetMapping(value = "/subscribe/{topic}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter subscribeToTopic(@PathVariable String topic) {
-        Integer userId = authContext.getCurrentUserId().orElse(null);
+    public SseEmitter subscribeToTopic(
+            @PathVariable String topic,
+            @RequestParam(required = false) String token) {
+
+        Integer userId = extractUserId(token);
         String username = authContext.getCurrentUsername().orElse("unknown");
 
         if (userId == null) {
@@ -181,5 +221,29 @@ public class SseController {
                 "disconnected", true,
                 "timestamp", System.currentTimeMillis()
         ));
+    }
+
+    /**
+     * Helper method to extract userId from token parameter
+     */
+    private Integer extractUserId(String token) {
+        if (authContext.getCurrentUserId().isPresent()) {
+            return authContext.getCurrentUserId().get();
+        }
+
+        if (token != null && !token.isEmpty()) {
+            try {
+                Jwt jwt = jwtDecoder.decode(token);
+                UsernamePasswordAuthenticationToken auth =
+                        new UsernamePasswordAuthenticationToken(jwt, null, null);
+                SecurityContextHolder.getContext().setAuthentication(auth);
+                return authContext.getCurrentUserId().orElse(null);
+            } catch (Exception e) {
+                log.error("Failed to decode token: {}", e.getMessage());
+                return null;
+            }
+        }
+
+        return null;
     }
 }

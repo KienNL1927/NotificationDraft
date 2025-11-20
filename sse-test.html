@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SSE Notification Test</title>
+    <title>SSE Notification Test (Fixed)</title>
     <style>
         * {
             margin: 0;
@@ -60,16 +60,22 @@
             font-weight: 500;
         }
 
-        input[type="text"], input[type="number"] {
+        input[type="text"], input[type="number"], textarea {
             width: 100%;
             padding: 10px;
             border: 2px solid #e0e0e0;
             border-radius: 6px;
             font-size: 14px;
             transition: border-color 0.3s;
+            font-family: monospace;
         }
 
-        input[type="text"]:focus, input[type="number"]:focus {
+        textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        input:focus, textarea:focus {
             outline: none;
             border-color: #667eea;
         }
@@ -267,13 +273,6 @@
             color: #a0aec0;
         }
 
-        .empty-state svg {
-            width: 80px;
-            height: 80px;
-            margin-bottom: 20px;
-            opacity: 0.5;
-        }
-
         .log-entry {
             font-family: 'Courier New', monospace;
             font-size: 12px;
@@ -284,22 +283,42 @@
             margin-bottom: 5px;
             word-break: break-all;
         }
+
+        .alert {
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+        }
+
+        .alert-info {
+            background: #bee3f8;
+            color: #2c5282;
+        }
+
+        .alert-warning {
+            background: #feebc8;
+            color: #7c2d12;
+        }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="header">
-        <h1>🔔 SSE Notification Test</h1>
-        <p class="subtitle">Real-time notification testing for Notification Service</p>
+        <h1>🔔 SSE Notification Test (Fixed)</h1>
+        <p class="subtitle">Real-time notification testing with JWT token support</p>
     </div>
 
     <div class="config-panel">
+        <div class="alert alert-info">
+            <strong>ℹ️ How it works:</strong> This version passes the JWT token as a URL query parameter
+            since EventSource doesn't support custom headers.
+        </div>
+
         <h2 style="margin-bottom: 20px; color: #333;">Configuration</h2>
 
         <div class="form-group">
             <label for="jwtToken">JWT Token</label>
-            <input type="text" id="jwtToken" placeholder="Paste your JWT token here..."
-                   value="eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...">
+            <textarea id="jwtToken" placeholder="Paste your JWT token here..."></textarea>
         </div>
 
         <div class="form-group">
@@ -310,7 +329,7 @@
         <div class="form-group">
             <label for="baseUrl">Base URL</label>
             <input type="text" id="baseUrl" placeholder="http://localhost:8082"
-                   value="http://localhost:8082">
+                   value="http://localhost:8082/notification-service">
         </div>
 
         <div class="button-group">
@@ -353,9 +372,6 @@
 
         <div id="notifications">
             <div class="empty-state">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                </svg>
                 <p>No notifications yet</p>
                 <p style="font-size: 12px; margin-top: 5px;">Connect to start receiving notifications</p>
             </div>
@@ -404,10 +420,10 @@
         }
 
         notification.innerHTML = `
-                <div class="notification-type">${type}</div>
-                <div class="notification-content">${contentHtml}</div>
-                <div class="notification-time">${new Date().toLocaleString()}</div>
-            `;
+            <div class="notification-type">${type}</div>
+            <div class="notification-content">${contentHtml}</div>
+            <div class="notification-time">${new Date().toLocaleString()}</div>
+        `;
 
         notificationsDiv.insertBefore(notification, notificationsDiv.firstChild);
 
@@ -462,9 +478,10 @@
         updateStatus('connecting', 'Connecting...');
         addNotification('system', 'Attempting to connect to SSE endpoint...');
 
-        // EventSource doesn't support custom headers, so we'll use a workaround
-        // In production, you might want to send token as query parameter or use a different approach
-        const url = `${baseUrl}/api/v1/sse/connect`;
+        // Pass token as query parameter since EventSource doesn't support headers
+        const url = `${baseUrl}/api/v1/sse/connect?token=${encodeURIComponent(token)}`;
+
+        console.log('Connecting to:', url);
 
         eventSource = new EventSource(url);
 
@@ -499,16 +516,8 @@
             console.error('SSE Error:', e);
             updateStatus('disconnected', 'Connection Error');
             document.getElementById('disconnectBtn').disabled = true;
-            addNotification('error', '❌ Connection error. Check console for details.');
+            addNotification('error', '❌ Connection error - Check console and verify your JWT token is valid');
             stopConnectionTimer();
-
-            // Attempt to reconnect
-            setTimeout(() => {
-                if (eventSource && eventSource.readyState === EventSource.CLOSED) {
-                    addNotification('system', '🔄 Attempting to reconnect...');
-                    connect();
-                }
-            }, 5000);
         };
     }
 
@@ -529,7 +538,7 @@
         const baseUrl = document.getElementById('baseUrl').value.trim();
         const userId = document.getElementById('userId').value;
 
-        const message = encodeURIComponent('Test notification from SSE test page at ' + new Date().toLocaleTimeString());
+        const message = encodeURIComponent('Test notification at ' + new Date().toLocaleTimeString());
 
         fetch(`${baseUrl}/api/v1/sse/test/send-to-user?targetUserId=${userId}&message=${message}`, {
             method: 'POST',
@@ -567,14 +576,11 @@
 
     function clearNotifications() {
         document.getElementById('notifications').innerHTML = `
-                <div class="empty-state">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                    </svg>
-                    <p>No notifications yet</p>
-                    <p style="font-size: 12px; margin-top: 5px;">Connect to start receiving notifications</p>
-                </div>
-            `;
+            <div class="empty-state">
+                <p>No notifications yet</p>
+                <p style="font-size: 12px; margin-top: 5px;">Connect to start receiving notifications</p>
+            </div>
+        `;
         receivedCount = 0;
         document.getElementById('receivedCount').textContent = '0';
         document.getElementById('lastReceived').textContent = '-';
