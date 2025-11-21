@@ -18,8 +18,10 @@ import org.springframework.data.redis.stream.StreamMessageListenerContainer;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -281,11 +283,16 @@ public class RedisStreamListener {
      */
     private Map<String, Object> cleanMap(Map<Object, Object> original) {
         Map<String, Object> cleaned = new HashMap<>();
+        Base64.Decoder decoder = Base64.getDecoder();
+
         for (Map.Entry<Object, Object> entry : original.entrySet()) {
             String key = entry.getKey().toString();
-            // Skip the "init" field and other non-data fields
             if (!key.equals("init") && !key.startsWith("_")) {
-                cleaned.put(key, entry.getValue());
+                String raw = entry.getValue().toString();
+
+                // decode all fields (or selectively per key)
+                String decoded = new String(decoder.decode(raw), StandardCharsets.UTF_8);
+                cleaned.put(key, decoded);
             }
         }
         return cleaned;
