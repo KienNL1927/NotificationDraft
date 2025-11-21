@@ -269,8 +269,9 @@ public class NotificationService {
 
         boolean willRetry = notification.getRetryCount() < maxRetryAttempts;
 
+        notification.setStatus(NotificationStatus.FAILED);  // <-- always mark failed
+
         if (!willRetry) {
-            notification.setStatus(NotificationStatus.FAILED);
             log.error("❌ Notification {} permanently failed after {} attempts",
                     notification.getId(), notification.getRetryCount());
         } else {
@@ -285,7 +286,7 @@ public class NotificationService {
     @Scheduled(fixedDelayString = "${app.notification.retry.delay-ms}")
     public void retryFailedNotifications() {
         List<Notification> failedNotifications = notificationRepository
-                .findByStatusAndRetryCountLessThan(NotificationStatus.PENDING, maxRetryAttempts);
+                .findByStatusAndRetryCountLessThan(NotificationStatus.FAILED, maxRetryAttempts);
 
         if (!failedNotifications.isEmpty()) {
             log.info("Retrying {} failed notifications", failedNotifications.size());
