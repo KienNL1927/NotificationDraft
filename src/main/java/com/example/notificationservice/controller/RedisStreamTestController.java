@@ -1,15 +1,21 @@
 package com.example.notificationservice.controller;
 
 import com.example.notificationservice.config.CasdoorAuthenticationContext;
+import com.example.notificationservice.entity.Notification;
+import com.example.notificationservice.enums.NotificationChannel;
 import com.example.notificationservice.event.inbound.AssessmentPublishedEvent;
 import com.example.notificationservice.event.inbound.ProctoringViolationEvent;
 import com.example.notificationservice.event.inbound.SessionCompletedEvent;
 import com.example.notificationservice.event.inbound.UserRegisteredEvent;
+import com.example.notificationservice.repository.NotificationRepository;
+import com.example.notificationservice.service.NotificationService;
 import com.example.notificationservice.service.RedisStreamService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.StreamOffset;
@@ -38,6 +44,8 @@ public class RedisStreamTestController {
     private final RedisStreamService redisStreamService;
     private final RedisTemplate<String, Object> redisTemplate;
     private final CasdoorAuthenticationContext authContext;
+    private final NotificationService notificationService;
+    private final NotificationRepository notificationRepository;
 
     @Value("${app.redis.streams.user-events}")
     private String userEventsStream;
@@ -342,5 +350,64 @@ public class RedisStreamTestController {
                 "shortName", shortName,
                 "length", length != null ? length : 0
         );
+    }
+
+    /**
+     * Debug endpoint - manually trigger assessment processing
+     */
+    @PostMapping("/debug/process-assessment-directly")
+    public ResponseEntity<Map<String, Object>> debugProcessAssessment(
+            @RequestParam Integer userId,
+            @RequestParam String username,
+            @RequestParam(required = false) String email) {
+
+        log.info("🐛 DEBUG: Manually processing assessment notification");
+
+        try {
+            Map<String, Object> data = new HashMap<>();
+            data.put("username", username);
+            data.put("assessmentName", "Debug Test Assessment");
+            data.put("duration", 60);
+            data.put("dueDate", "2025-02-01T00:00:00Z");
+
+            notificationService.processNotification(
+                    "assessment.published",
+                    userId,
+                    email,
+                    data,
+                    List.of(NotificationChannel.SSE, NotificationChannel.EMAIL)
+            );
+
+            // Wait a bit
+            Thread.sleep(2000);
+
+            // Check database
+            List<Notification> notifications = notificationRepository.findByRecipientId(
+                    userId,
+                    PageRequest.of(0, 1, Sort.by("createdAt").descending())
+            ).getContent();
+
+            Notification lastNotification = notifications.isEmpty() ? null : notifications.get(0);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "userId", userId,
+                    "notificationCreated", lastNotification != null,
+                    "notificationStatus", lastNotification != null ? lastNotification.getStatus() : "NONE",
+                    "templateCheck", lastNotification != null ?
+                            Map.of(
+                                    "hasUsername", lastNotification.getContent().contains(username),
+                                    "contentPreview", lastNotification.getContent().substring(0,
+                                            Math.min(200, lastNotification.getContent().length()))
+                            ) : "No notification"
+            ));
+
+        } catch (Exception e) {
+            log.error("Debug test failed", e);
+            return ResponseEntity.ok(Map.of(
+                    "success", false,
+                    "error", e.getMessage()
+            ));
+        }
     }
 }

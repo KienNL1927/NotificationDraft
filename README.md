@@ -1,700 +1,724 @@
-# Notification Service - Documentation
+# 🔔 Notification Service
 
-## Table of Contents
-1. [Authentication](#authentication)
-2. [UUID Implementation](#uuid-implementation)
-3. [Template System](#template-system)
-4. [Template Caching](#template-caching)
-5. [SSE (Server-Sent Events)](#sse-server-sent-events)
-6. [Bulk Notifications](#bulk-notifications)
+A robust, scalable real-time notification system built with Spring Boot that supports multiple delivery channels (Email, SSE, Push) and integrates with Redis Streams for event-driven architecture.
 
----
+## 📋 Table of Contents
 
-## 1. Authentication
-
-### Current Implementation
-Your application uses **JWT token verification only** - there's no login endpoint in this service.
-
-**Authentication Flow:**
-```
-1. User logs in via Casdoor (external OAuth2 provider)
-2. Casdoor issues JWT access token
-3. User includes token in requests: Authorization: Bearer <token>
-4. Your Spring Security validates the JWT using Casdoor's JWK endpoint
-5. CasdoorAuthenticationContext extracts user info from validated JWT
-```
-
-**Key Components:**
-- `SecurityConfig`: Configures JWT validation
-- `CasdoorAuthenticationContext`: Extracts user ID, roles, email from JWT claims
-- No login/logout endpoints in this service
-
-**Configuration (application.yml):**
-```yaml
-spring:
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          jwk-set-uri: http://your-casdoor:8000/api/.well-known/jwks
-```
+- [Overview](#overview)
+- [Features](#features)
+- [Technology Stack](#technology-stack)
+- [Architecture](#architecture)
+- [Getting Started](#getting-started)
+- [Configuration](#configuration)
+- [API Endpoints](#api-endpoints)
+- [Event-Driven Architecture](#event-driven-architecture)
+- [SSE (Server-Sent Events)](#sse-server-sent-events)
+- [Email Templates](#email-templates)
+- [Security](#security)
+- [Development](#development)
+- [Production Deployment](#production-deployment)
 
 ---
 
-## 2. UUID Implementation
+## 🎯 Overview
 
-### Changes Made
-All entity IDs changed from `Integer` to `UUID` for better scalability and distributed systems support.
+The Notification Service is a microservice designed to handle multi-channel notifications in a distributed system. It listens to events from Redis Streams, processes them according to user preferences, and delivers notifications through various channels including email, real-time SSE connections, and push notifications.
 
-**Benefits:**
-- No sequential ID collision in distributed environments
-- Better security (IDs not predictable)
-- Can generate IDs client-side if needed
+### Key Capabilities
 
-**Updated Entities:**
-- `NotificationTemplate.id` → UUID
-- `Notification.id` → UUID
-- `NotificationPreference.id` → UUID
-
-**Migration:**
-Use `V2__migrate_to_uuid.sql` to migrate existing database.
+- **Multi-Channel Delivery**: Email, SSE (Server-Sent Events), and Push notifications
+- **Event-Driven**: Consumes events from Redis Streams for loose coupling
+- **User Preferences**: Per-user notification settings with channel and frequency control
+- **Template Engine**: Dynamic content generation with variable substitution
+- **Retry Mechanism**: Automatic retry for failed notifications
+- **Real-Time Updates**: WebSocket-alternative SSE for instant notification delivery
+- **OAuth2 Integration**: Secured with Casdoor JWT authentication
+- **Scalable Architecture**: Stateless design with Redis-backed message queuing
 
 ---
 
-## 3. Template System
+## ✨ Features
 
-### Overview
-Templates use **placeholder syntax**: `{{variableName}}` for dynamic content.
+### Core Features
 
-### Template Type Enum
-```java
-public enum TemplateType {
-    EMAIL,    // Email notifications
-    SSE,      // Real-time browser notifications
-    PUSH,     // Mobile push notifications
-    SMS       // SMS notifications
+- ✅ **Multi-Channel Notifications**
+   - Email (HTML templates with SMTP)
+   - Server-Sent Events (SSE) for real-time web notifications
+   - Push notifications (framework ready)
+
+- ✅ **Event Processing**
+   - User registration events
+   - Assessment completion events
+   - Proctoring violation alerts
+   - Assessment publication notifications
+
+- ✅ **User Preference Management**
+   - Enable/disable specific channels
+   - Email frequency control (immediate, daily, weekly)
+   - Category-based notification filtering
+
+- ✅ **Template System**
+   - Dynamic HTML/text templates
+   - Variable substitution with `{{variableName}}` syntax
+   - Template caching with Caffeine
+   - Admin CRUD operations for templates
+
+- ✅ **Reliability**
+   - Automatic retry with exponential backoff
+   - Dead letter handling for permanently failed messages
+   - Notification status tracking (PENDING, SENT, DELIVERED, FAILED)
+
+- ✅ **Real-Time Features**
+   - SSE connections with heartbeat mechanism
+   - Topic-based subscriptions for broadcasts
+   - Connection status monitoring
+
+---
+
+## 🛠 Technology Stack
+
+### Backend Framework
+- **Spring Boot 3.5.5** - Core framework
+- **Java 21** - Programming language
+- **Maven** - Dependency management
+
+### Data & Caching
+- **PostgreSQL 16** - Primary database
+- **Redis Stack** (Redis + RedisInsight) - Message streaming & caching
+- **Flyway** - Database migration
+- **Hibernate** - ORM
+- **Caffeine** - In-memory caching for templates
+
+### Security & Authentication
+- **Spring Security** - Security framework
+- **OAuth2 Resource Server** - JWT validation
+- **Casdoor Integration** - External identity provider
+
+### Messaging & Events
+- **Redis Streams** - Event streaming (Consumer Groups pattern)
+- **Spring Data Redis** - Redis integration
+- **Lettuce** - Redis client
+
+### Email & Notifications
+- **JavaMail (Spring Mail)** - Email sending
+- **SSE (Server-Sent Events)** - Real-time notifications
+- **MailHog** (dev) - Email testing
+
+### Infrastructure
+- **Docker & Docker Compose** - Containerization
+- **Spring Actuator** - Health checks & metrics
+
+---
+
+## 🏗 Architecture
+
+### System Design
+
+```
+┌─────────────────┐         ┌──────────────────┐
+│  User Service   │────────▶│  Redis Streams   │
+│ Assessment Svc  │         │ (Event Bus)      │
+│ Proctoring Svc  │         └────────┬─────────┘
+└─────────────────┘                  │
+                                     │ Consume Events
+                                     ▼
+                          ┌──────────────────────┐
+                          │ Notification Service │
+                          │  - Event Listener    │
+                          │  - Template Engine   │
+                          │  - Preference Check  │
+                          └──────────┬───────────┘
+                                     │
+                    ┌────────────────┼────────────────┐
+                    ▼                ▼                ▼
+              ┌─────────┐      ┌─────────┐    ┌──────────┐
+              │  EMAIL  │      │   SSE   │    │   PUSH   │
+              │ Channel │      │ Channel │    │ Channel  │
+              └─────────┘      └─────────┘    └──────────┘
+```
+
+### Event Flow
+
+1. **Event Production**: Other services publish events to Redis Streams
+2. **Event Consumption**: Notification Service consumes events via Consumer Groups
+3. **Processing**: Events are transformed using templates and user preferences
+4. **Delivery**: Notifications sent through appropriate channels
+5. **Tracking**: Status updates stored in PostgreSQL
+
+### Database Schema
+
+- **notification_templates**: Stores email/SSE/push templates
+- **notifications**: Tracks all sent notifications with status
+- **notification_preferences**: User-specific notification settings
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- **Java 21** or higher
+- **Docker & Docker Compose**
+- **Maven 3.9+**
+- **PostgreSQL 16** (or use Docker)
+- **Redis Stack** (or use Docker)
+
+### Quick Start with Docker Compose
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd notification-service
+   ```
+
+2. **Create environment file**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+3. **Start all services**
+   ```bash
+   docker-compose up -d
+   ```
+
+4. **Verify services are running**
+   ```bash
+   docker-compose ps
+   ```
+
+5. **Check application logs**
+   ```bash
+   docker-compose logs -f notification-service
+   ```
+
+6. **Access the service**
+   - API: http://localhost:8082/notification-service
+   - Health: http://localhost:8082/notification-service/actuator/health
+   - RedisInsight: http://localhost:8001
+
+### Local Development Setup
+
+1. **Start infrastructure**
+   ```bash
+   docker-compose up -d postgres redis
+   ```
+
+2. **Build the application**
+   ```bash
+   mvn clean package -DskipTests
+   ```
+
+3. **Run the application**
+   ```bash
+   mvn spring-boot:run
+   ```
+
+   Or with specific profile:
+   ```bash
+   mvn spring-boot:run -Dspring-boot.run.profiles=local
+   ```
+
+## 📡 API Endpoints
+
+### Authentication Required
+All endpoints require JWT Bearer token in Authorization header:
+```
+Authorization: Bearer <your-jwt-token>
+```
+
+### User Endpoints
+
+#### Get My Preferences
+```http
+GET /api/v1/preferences
+```
+
+#### Update My Preferences
+```http
+PUT /api/v1/preferences
+Content-Type: application/json
+
+{
+  "emailEnabled": true,
+  "pushEnabled": false,
+  "sseEnabled": true,
+  "emailFrequency": "IMMEDIATE",
+  "categories": {
+    "assessment": true,
+    "proctoring": true,
+    "system": false
+  }
 }
 ```
 
-### How Templates Work
+### SSE Endpoints
 
-#### 1. Template Definition
-```json
+#### Connect to SSE Stream
+```http
+GET /api/v1/sse/connect?token=<jwt-token>
+Accept: text/event-stream
+```
+
+**Events received:**
+- `connect` - Initial connection confirmation
+- `notification` - New notification
+- `heartbeat` - Keep-alive ping
+- `broadcast` - System-wide messages
+
+#### Check Connection Status
+```http
+GET /api/v1/sse/status/{userId}
+```
+
+### Admin Endpoints (ROLE_ADMIN required)
+
+#### Template Management
+```http
+# List all templates
+GET /api/v1/templates
+
+# Get specific template
+GET /api/v1/templates/{name}
+
+# Create template
+POST /api/v1/templates
+Content-Type: application/json
+
 {
-  "name": "welcome_user",
+  "name": "custom_template",
   "type": "EMAIL",
-  "subject": "Welcome {{firstName}}!",
-  "body": "<h1>Hello {{firstName}} {{lastName}}!</h1><p>Your username: {{username}}</p>",
+  "subject": "Hello {{username}}!",
+  "body": "<html><body>Welcome {{username}}</body></html>",
   "variables": {
-    "firstName": "string",
-    "lastName": "string", 
     "username": "string"
   }
 }
+
+# Update template
+PUT /api/v1/templates/{name}
+
+# Delete template
+DELETE /api/v1/templates/{name}
 ```
 
-#### 2. Template Processing
-The `TemplateEngine` class processes templates:
-
-```java
-// Input template
-String template = "Hello {{username}}, your score is {{score}}";
-
-// Input data
-Map<String, Object> data = Map.of(
-    "username", "John",
-    "score", 95
-);
-
-// Output
-String result = templateEngine.processTemplate(template, data);
-// Result: "Hello John, your score is 95"
-```
-
-#### 3. Pattern Matching
-- Uses regex: `\\{\\{(\\w+)\\}\\}`
-- Matches: `{{variableName}}`
-- Extracts variable name and replaces with actual value
-- Keeps placeholder if no value found
-
-### Creating Templates
-
-**API Endpoint:**
+#### Test Endpoints
 ```http
-POST /api/v1/templates
-Authorization: Bearer <admin_token>
-Content-Type: application/json
+# Send test notification
+POST /api/v1/sse/test/send-to-user?targetUserId=123&message=Test
 
-{
-  "name": "custom_alert",
-  "type": "SSE",
-  "subject": "Alert for {{username}}",
-  "body": "Dear {{username}}, {{message}}",
-  "variables": {
-    "username": "string",
-    "message": "string"
-  }
-}
+# Broadcast to all
+POST /api/v1/sse/test/broadcast?topic=general&message=Hello
+
+# Connection statistics
+GET /api/v1/sse/stats
 ```
 
-### Using Templates in Notifications
+### Redis Stream Testing (Dev/Test only)
 
-**Single User:**
-```java
-Map<String, Object> data = new HashMap<>();
-data.put("username", "John");
-data.put("message", "Your session expires in 5 minutes");
-
-notificationService.processNotification(
-    "custom_alert",           // template name
-    userId,                   // recipient
-    email,                    // email address
-    data,                     // template data
-    List.of(NotificationChannel.SSE, NotificationChannel.EMAIL)
-);
-```
-
-**Multiple Users (Bulk):**
 ```http
-POST /api/v1/notifications/bulk
-Authorization: Bearer <admin_token>
-Content-Type: application/json
+# Publish user registered event
+POST /api/v1/redis/test/events/user-registered
 
-{
-  "userIds": [123, 124, 125],
-  "type": "custom_alert",
-  "channels": ["EMAIL", "SSE"],
-  "commonData": {
-    "message": "System maintenance scheduled"
-  },
-  "userSpecificData": {
-    "123": {"username": "John", "email": "john@example.com"},
-    "124": {"username": "Jane", "email": "jane@example.com"},
-    "125": {"username": "Bob", "email": "bob@example.com"}
-  }
-}
+# Publish session completed event
+POST /api/v1/redis/test/events/session-completed
+
+# Quick test
+POST /api/v1/redis/test/quick/user-registered?userId=123&username=john&email=john@example.com
+
+# View stream info
+GET /api/v1/redis/test/streams/{streamName}/info
+
+# Read messages
+GET /api/v1/redis/test/streams/{streamName}/messages?count=10
 ```
 
 ---
 
-## 4. Template Caching
+## 🔄 Event-Driven Architecture
 
-### Configuration
-Templates are cached using **Caffeine Cache** for performance.
+### Supported Events
 
-**Cache Settings:**
-- Cache name: `templates`
-- Max size: 100 templates
-- TTL: 1 hour
-- Statistics enabled
-
-**How It Works:**
-```java
-@Cacheable(value = "templates", key = "#name")
-public Optional<TemplateDto> getTemplateByName(String name) {
-    // First call → database query → cached
-    // Subsequent calls → served from cache
-}
-
-@CacheEvict(value = "templates", key = "#name")
-public TemplateDto updateTemplate(String name, TemplateDto dto) {
-    // Invalidates cache on update
+#### 1. User Registered Event - EMAIL
+```json
+{
+  "eventId": "uuid",
+  "timestamp": "2024-01-01T00:00:00Z",
+  "userId": 123,
+  "username": "john.doe",
+  "email": "john@example.com",
+  "firstName": "John",
+  "lastName": "Doe"
 }
 ```
+**Stream**: `notification:user-events`  
+**Template**: `welcome_user`
 
-**Benefits:**
-- Faster template retrieval (no DB query)
-- Reduced database load
-- Automatic eviction on updates
+#### 2. Session Completed Event - EMAIL
+```json
+{
+  "eventId": "uuid",
+  "timestamp": "2024-01-01T00:00:00Z",
+  "userId": 123,
+  "username": "john.doe",
+  "email": "john@example.com",
+  "sessionId": "SESSION-123",
+  "assessmentName": "Java Assessment",
+  "completionTime": "45 minutes",
+  "score": 85.5,
+  "status": "PASSED"
+}
+```
+**Stream**: `notification:assessment-events`  
+**Template**: `session_completion`
 
-**Dependency (pom.xml):**
-```xml
-<dependency>
-    <groupId>com.github.ben-manes.caffeine</groupId>
-    <artifactId>caffeine</artifactId>
-</dependency>
+#### 3. Proctoring Violation Event - EMAIL & SSE
+```json
+{
+  "eventId": "uuid",
+  "timestamp": "2024-01-01T00:00:00Z",
+  "userId": 123,
+  "username": "john.doe",
+  "sessionId": "SESSION-123",
+  "violationType": "MULTIPLE_FACES_DETECTED",
+  "severity": "HIGH",
+  "proctorIds": [1, 2, 3]
+}
+```
+**Stream**: `notification:proctoring-events`  
+**Template**: `proctoring_alert`
+
+#### 4. Assessment Published Event - EMAIL & SSE
+```json
+{
+  "eventId": "uuid",
+  "timestamp": "2024-01-01T00:00:00Z",
+  "assessmentId": "ASSESS-123",
+  "assessmentName": "Spring Boot Advanced",
+  "duration": 120,
+  "dueDate": "2024-01-15T23:59:59Z",
+  "assignedUsers": [
+    {
+      "userId": 123,
+      "username": "john.doe",
+      "email": "john@example.com"
+    }
+  ]
+}
+```
+**Stream**: `notification:assessment-events`  
+**Template**: `new_assessment_assigned`
+
+### Publishing Events (From Other Services)
+
+```java
+// Example using RedisStreamService
+@Autowired
+private RedisTemplate<String, Object> redisTemplate;
+
+UserRegisteredEvent event = UserRegisteredEvent.builder()
+    .userId(123)
+    .username("john.doe")
+    .email("john@example.com")
+    .firstName("John")
+    .lastName("Doe")
+    .build();
+event.init(); // Sets eventId and timestamp
+
+ObjectRecord<String, Object> record = StreamRecords.newRecord()
+    .ofObject(event)
+    .withStreamKey("notification:user-events");
+
+redisTemplate.opsForStream().add(record);
 ```
 
 ---
 
-## 5. SSE (Server-Sent Events)
+## 📨 SSE (Server-Sent Events)
 
-### What is SSE?
+### Client Connection
 
-**Server-Sent Events** is a technology that allows servers to push real-time updates to clients over HTTP.
-
-**Key Characteristics:**
-- **Unidirectional**: Server → Client only (not bidirectional like WebSocket)
-- **HTTP-based**: Uses standard HTTP connection
-- **Automatic reconnection**: Browser automatically reconnects if connection drops
-- **Event-based**: Server sends named events that client listens to
-
-### SSE vs WebSocket
-
-| Feature | SSE | WebSocket |
-|---------|-----|-----------|
-| Direction | Server → Client | Bidirectional |
-| Protocol | HTTP | ws:// or wss:// |
-| Reconnection | Automatic | Manual |
-| Complexity | Simple | Complex |
-| Use Case | Real-time updates, notifications | Chat, gaming, collaboration |
-
-### How SSE Works in Your Application
-
-#### Architecture
-```
-┌─────────┐         HTTP GET          ┌──────────────────┐
-│ Client  │ ────────────────────────> │  Spring Boot     │
-│ Browser │                            │  SseEmitter      │
-└─────────┘                            └──────────────────┘
-     ↑                                          │
-     │                                          │
-     │        Server-Sent Events                │
-     │     (text/event-stream)                  │
-     │                                          │
-     └──────────────────────────────────────────┘
-```
-
-#### 1. Client Connects
 ```javascript
-// JavaScript client code
-const eventSource = new EventSource('/api/v1/sse/connect', {
-  headers: {
-    'Authorization': 'Bearer YOUR_JWT_TOKEN'
-  }
+// JavaScript client example
+const token = 'your-jwt-token';
+const eventSource = new EventSource(
+  `http://localhost:8082/notification-service/api/v1/sse/connect?token=${token}`
+);
+
+eventSource.addEventListener('connect', (e) => {
+  console.log('Connected:', JSON.parse(e.data));
 });
 
-// Listen for different event types
-eventSource.addEventListener('notification', (event) => {
-  const data = JSON.parse(event.data);
-  console.log('New notification:', data);
-  showNotification(data.content);
+eventSource.addEventListener('notification', (e) => {
+  const notification = JSON.parse(e.data);
+  console.log('New notification:', notification);
+  // Display notification in UI
 });
 
-eventSource.addEventListener('connect', (event) => {
-  console.log('Connected:', event.data);
+eventSource.addEventListener('heartbeat', (e) => {
+  console.log('Heartbeat');
 });
 
-eventSource.addEventListener('heartbeat', (event) => {
-  console.log('Connection alive');
-});
-
-// Handle errors
 eventSource.onerror = (error) => {
-  console.error('SSE error:', error);
+  console.error('SSE Error:', error);
 };
 ```
+---
 
-#### 2. Server Creates Emitter
-```java
-@GetMapping(value = "/connect", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-public SseEmitter connect() {
-    Integer userId = authContext.getCurrentUserId().orElse(null);
-    
-    // Create emitter with 24-hour timeout
-    SseEmitter emitter = new SseEmitter(24 * 60 * 60 * 1000L);
-    
-    // Store emitter mapped to userId
-    userEmitters.put("user_" + userId, emitter);
-    
-    // Set up cleanup callbacks
-    emitter.onCompletion(() -> removeUserEmitter(userId));
-    emitter.onTimeout(() -> removeUserEmitter(userId));
-    emitter.onError((ex) -> removeUserEmitter(userId));
-    
-    // Send initial connection event
-    emitter.send(SseEmitter.event()
-        .name("connect")
-        .data(Map.of("message", "Connected", "userId", userId)));
-    
-    return emitter;
-}
+## 📧 Email Templates
+
+### Template Syntax
+
+Templates use `{{variableName}}` placeholders:
+
+```html
+<html>
+  <body>
+    <h2>Hello {{firstName}} {{lastName}}!</h2>
+    <p>Your username is: <strong>{{username}}</strong></p>
+    <p>Email: {{email}}</p>
+  </body>
+</html>
 ```
 
-#### 3. Server Sends Events
-```java
-// Send notification to specific user
-public boolean sendToUser(Integer userId, String eventName, Object data) {
-    SseEmitter emitter = userEmitters.get("user_" + userId);
-    
-    if (emitter != null) {
-        try {
-            emitter.send(SseEmitter.event()
-                .id(String.valueOf(System.currentTimeMillis()))
-                .name(eventName)
-                .data(data));
-            return true;
-        } catch (IOException e) {
-            // Connection broken, remove emitter
-            removeUserEmitter(userId);
-            return false;
-        }
+### Default Templates
+
+The service comes with 4 pre-configured templates:
+
+1. **welcome_user** - User registration welcome email
+2. **session_completion** - Assessment completion notification
+3. **proctoring_alert** - Proctoring violation alert
+4. **new_assessment_assigned** - New assessment assignment
+
+### Creating Custom Templates
+
+```bash
+curl -X POST http://localhost:8082/notification-service/api/v1/templates \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "password_reset",
+    "type": "EMAIL",
+    "subject": "Password Reset Request",
+    "body": "<html><body><p>Hi {{username}},</p><p>Click here to reset: {{resetLink}}</p></body></html>",
+    "variables": {
+      "username": "string",
+      "resetLink": "string"
     }
-    return false;
-}
+  }'
 ```
-
-#### 4. Event Format
-SSE events sent over the wire look like this:
-```
-id: 1234567890
-event: notification
-data: {"type":"proctoring.violation","content":"Alert message","timestamp":"2025-10-25T10:30:00Z"}
-
-id: 1234567891
-event: heartbeat
-data: {"type":"heartbeat","timestamp":"2025-10-25T10:30:30Z"}
-```
-
-### SSE Features in Your Application
-
-#### 1. User-Specific Connections
-Each user gets their own SSE connection:
-```java
-// User connects
-GET /api/v1/sse/connect
-Authorization: Bearer <token>
-
-// User ID extracted from JWT
-// Emitter stored as: userEmitters.put("user_123", emitter)
-```
-
-#### 2. Topic Subscriptions
-Users can subscribe to broadcast topics:
-```java
-// Subscribe to "proctoring" topic
-GET /api/v1/sse/subscribe/proctoring
-Authorization: Bearer <token>
-
-// Multiple users subscribe to same topic
-// Broadcast message goes to all subscribers
-```
-
-#### 3. Heartbeat Mechanism
-Keeps connections alive:
-```java
-@Scheduled(fixedDelay = 30000) // Every 30 seconds
-public void sendHeartbeat() {
-    userEmitters.forEach((key, emitter) -> {
-        try {
-            emitter.send(SseEmitter.event()
-                .name("heartbeat")
-                .comment("keep-alive"));
-        } catch (IOException e) {
-            // Remove dead connection
-            removeUserEmitter(key);
-        }
-    });
-}
-```
-
-#### 4. Automatic Cleanup
-Connections are automatically cleaned up on:
-- Timeout (24 hours)
-- Client disconnect
-- Error
-- Manual disconnect
-
-### SSE Connection Lifecycle
-
-```
-1. CLIENT CONNECTS
-   ↓
-2. SERVER CREATES EMITTER
-   ↓
-3. SEND INITIAL "connect" EVENT
-   ↓
-4. STORE EMITTER IN MAP (userEmitters)
-   ↓
-5. NOTIFICATIONS SENT AS EVENTS
-   ↓
-6. HEARTBEATS EVERY 30s
-   ↓
-7. ON DISCONNECT/TIMEOUT/ERROR
-   ↓
-8. REMOVE FROM MAP
-   ↓
-9. CONNECTION CLOSED
-```
-
-### Testing SSE
-
-**Using cURL:**
-```bash
-curl -N -H "Authorization: Bearer YOUR_TOKEN" \
-     http://localhost:8080/api/v1/sse/connect
-```
-
-**Using JavaScript:**
-```javascript
-const eventSource = new EventSource('/api/v1/sse/connect');
-eventSource.onmessage = (e) => console.log(e.data);
-```
-
-**Admin: Send Test Notification:**
-```bash
-curl -X POST "http://localhost:8080/api/v1/sse/test/send-to-user?targetUserId=123&message=Test" \
-     -H "Authorization: Bearer ADMIN_TOKEN"
-```
-
-### SSE Use Cases in Your Application
-
-1. **Real-time Proctoring Alerts**: Notify proctors immediately when violations occur
-2. **Assessment Notifications**: Inform users when new assessments are assigned
-3. **Session Updates**: Real-time updates during exam sessions
-4. **System Broadcasts**: Maintenance notifications to all connected users
-
-### SSE Advantages
-
-✅ **Simple**: Just HTTP GET, no special protocol
-✅ **Automatic Reconnection**: Browser handles reconnection
-✅ **Efficient**: Single connection for multiple events
-✅ **Scalable**: ConcurrentHashMap handles concurrent access
-✅ **Firewall-Friendly**: Uses standard HTTP/HTTPS
-
-### SSE Limitations
-
-❌ **One-way**: Server → Client only (use WebSocket for bidirectional)
-❌ **HTTP/1.1**: Limited concurrent connections per domain (6-8 typically)
-❌ **No Binary**: Text-based only (JSON works great though)
 
 ---
 
-## 6. Bulk Notifications
+## 🔐 Security
 
-### Endpoint
-```http
-POST /api/v1/notifications/bulk
-Authorization: Bearer <admin_token>
-Content-Type: application/json
-```
+### OAuth2 JWT Authentication
 
-### Request Body
+The service uses Casdoor for authentication. JWT tokens must contain:
+
 ```json
 {
-  "userIds": [123, 124, 125],
-  "type": "assessment.published",
-  "channels": ["EMAIL", "SSE"],
-  "commonData": {
-    "assessmentName": "Spring Boot Advanced",
-    "duration": 120,
-    "dueDate": "2025-11-01"
-  },
-  "userSpecificData": {
-    "123": {
-      "username": "John",
-      "email": "john@example.com"
-    },
-    "124": {
-      "username": "Jane",
-      "email": "jane@example.com"
-    },
-    "125": {
-      "username": "Bob",
-      "email": "bob@example.com"
-    }
-  }
+  "sub": "user-id",
+  "name": "username",
+  "email": "user@example.com",
+  "roles": [
+    { "name": "Admin" }
+  ],
+  "userId": 123,
+  "tag": "admin"
 }
 ```
 
-### Response
-```json
-{
-  "message": "Bulk notification processing completed",
-  "requestedBy": "admin",
-  "statistics": {
-    "total": 3,
-    "success": 3,
-    "failed": 0
-  },
-  "timestamp": 1234567890
-}
-```
+### Role-Based Access Control
 
-### How It Works
+- **ROLE_USER**: Access to own preferences and SSE connection
+- **ROLE_ADMIN**: Full access including template management and test endpoints
 
-1. **Admin sends bulk request** with array of userIds
-2. **Service fetches template** based on notification type
-3. **For each user:**
-   - Merge commonData with user-specific data
-   - Process template with merged data
-   - Check user preferences
-   - Send via requested channels
-4. **Track statistics** (success/failed counts)
-5. **Publish completion event** to Kafka
+### Security Headers
 
-### Data Merging Strategy
-```java
-// Common data applies to all users
-commonData = {"assessmentName": "Test", "duration": 60}
-
-// User-specific overrides/adds to common
-userSpecificData[123] = {"username": "John", "email": "john@example.com"}
-
-// Final data for user 123
-finalData = {
-    "assessmentName": "Test",  // from common
-    "duration": 60,             // from common
-    "username": "John",         // from user-specific
-    "email": "john@example.com" // from user-specific
-}
-```
-
-### Async Processing
-Bulk notifications are processed asynchronously:
-```java
-@Async("notificationExecutor")
-public CompletableFuture<Map<String, Integer>> processBulkNotification(...)
-```
-
-Benefits:
-- Non-blocking API response
-- Parallel processing
-- Better scalability
+All endpoints are protected with:
+- CSRF disabled (stateless API)
+- CORS enabled for specified origins
+- JWT validation on every request
+- Session management: STATELESS
 
 ---
 
-## Example Use Cases
 
-### 1. Welcome Email on Registration
-```java
-// Kafka listener receives user.registered event
-Map<String, Object> data = Map.of(
-    "firstName", "John",
-    "lastName", "Doe",
-    "username", "johndoe",
-    "email", "john@example.com"
-);
+## 🚢 Production Deployment
 
-notificationService.processNotification(
-    "user.registered",
-    userId,
-    email,
-    data,
-    List.of(NotificationChannel.EMAIL)
-);
+### Building Docker Image
+
+```bash
+# Build the JAR
+mvn clean package -DskipTests
+
+# Build Docker image
+docker build -t your-registry/notification-service:latest .
+
+# Push to registry
+docker push your-registry/notification-service:latest
 ```
 
-### 2. Real-time Proctoring Alert
-```java
-// Multiple proctors notified via SSE
-for (Integer proctorId : proctorIds) {
-    Map<String, Object> data = Map.of(
-        "username", "John",
-        "sessionId", "SESSION-123",
-        "violationType", "MULTIPLE_FACES",
-        "severity", "HIGH",
-        "timestamp", Instant.now().toString()
-    );
-    
-    notificationService.processNotification(
-        "proctoring.violation",
-        proctorId,
-        null,  // No email needed for SSE
-        data,
-        List.of(NotificationChannel.SSE, NotificationChannel.EMAIL)
-    );
-}
+### Docker Compose Production Setup
+
+Use the production-ready `docker-compose.yml` provided:
+
+```bash
+# Create production .env file
+cp .env.example .env
+# Edit with production values
+
+# Start services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f notification-service
 ```
 
-### 3. Bulk Assessment Assignment
-```http
-POST /api/v1/notifications/bulk
+### Health Checks
 
-{
-  "userIds": [101, 102, 103, 104, 105],
-  "type": "assessment.published",
-  "channels": ["EMAIL", "SSE"],
-  "commonData": {
-    "assessmentName": "Java Fundamentals",
-    "duration": 90,
-    "dueDate": "2025-11-15"
-  },
-  "userSpecificData": {
-    "101": {"username": "Alice", "email": "alice@example.com"},
-    "102": {"username": "Bob", "email": "bob@example.com"},
-    "103": {"username": "Carol", "email": "carol@example.com"},
-    "104": {"username": "Dave", "email": "dave@example.com"},
-    "105": {"username": "Eve", "email": "eve@example.com"}
-  }
-}
+Monitor service health:
+
+```bash
+# Application health
+curl http://localhost:8082/notification-service/actuator/health
+
+# Detailed health (includes DB, Redis)
+curl http://localhost:8082/notification-service/actuator/health | jq
+
+# Metrics
+curl http://localhost:8082/notification-service/actuator/metrics
+```
+
+### Scaling
+
+Scale notification service instances:
+
+```bash
+docker-compose up -d --scale notification-service=3
+```
+
+**Important**: Each instance should have a unique `REDIS_CONSUMER_NAME`:
+- notification-service-1
+- notification-service-2
+- notification-service-3
+
+This ensures proper consumer group distribution.
+
+### Monitoring Recommendations
+
+- **Logs**: Centralize with ELK/Loki
+- **Metrics**: Export to Prometheus via Spring Actuator
+- **Tracing**: Add Spring Cloud Sleuth + Zipkin
+- **Alerts**: Monitor:
+   - Failed notification rate
+   - Redis stream lag
+   - Database connection pool
+   - SSE connection count
+
+---
+
+## 📊 Performance Tuning
+
+### Thread Pool Configuration
+
+Adjust in `.env`:
+
+```env
+SCHEDULING_POOL_SIZE=5
+```
+
+### Database Connection Pool
+
+```env
+DB_POOL_MAX_SIZE=20
+DB_POOL_MIN_IDLE=10
+DB_CONNECTION_TIMEOUT=30000
+```
+
+### Redis Connection Pool
+
+```env
+REDIS_POOL_MAX_ACTIVE=16
+REDIS_POOL_MAX_IDLE=8
+REDIS_POOL_MIN_IDLE=4
+```
+
+### Notification Retry Settings
+
+```env
+NOTIFICATION_RETRY_MAX_ATTEMPTS=3
+NOTIFICATION_RETRY_DELAY_MS=300000  # 5 minutes
 ```
 
 ---
 
-## Configuration Requirements
+## 🐛 Troubleshooting
 
-### application.yml
-```yaml
-spring:
-  # JWT validation
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          jwk-set-uri: http://your-casdoor:8000/api/.well-known/jwks
+### Common Issues
 
-  # Cache configuration
-  cache:
-    type: caffeine
-    cache-names: templates
-
-# Notification settings
-app:
-  notification:
-    email:
-      from: noreply@yourapp.com
-      from-name: "Your App"
-    retry:
-      max-attempts: 3
-      delay-ms: 60000  # 1 minute
+#### 1. Cannot connect to PostgreSQL
+```
+Error: Connection refused: postgres:5432
+```
+**Solution**: Ensure PostgreSQL container is running and healthy
+```bash
+docker-compose ps postgres
+docker-compose logs postgres
 ```
 
-### Dependencies (pom.xml)
-```xml
-<!-- Caching -->
-<dependency>
-    <groupId>com.github.ben-manes.caffeine</groupId>
-    <artifactId>caffeine</artifactId>
-</dependency>
-<dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-cache</artifactId>
-</dependency>
+#### 2. Redis connection timeout
+```
+Error: RedisConnectionException
+```
+**Solution**: Check Redis is running and accessible
+```bash
+docker-compose ps redis
+redis-cli -h localhost -p 6379 ping
+```
 
-<!-- UUID extension for PostgreSQL -->
-<!-- Enabled in migration script -->
+#### 3. Email not sending
+```
+Error: SMTPAuthenticationException
+```
+**Solution**:
+- Verify SMTP credentials
+- Check if "Less secure app access" is enabled (Gmail)
+- Use App Password instead of regular password
+- Verify firewall rules for SMTP port 587
+
+#### 4. JWT token invalid
+```
+Error: 401 Unauthorized
+```
+**Solution**:
+- Verify `CASDOOR_JWK_URI` is accessible
+- Check token expiration
+- Ensure Casdoor issuer matches configuration
+
+#### 5. No events being consumed
+```
+No notifications generated
+```
+**Solution**:
+- Check Redis streams exist: `redis-cli XINFO STREAM notification:user-events`
+- Verify consumer group: `redis-cli XINFO GROUPS notification:user-events`
+- Check application logs for consumer errors
+
+### Debug Mode
+
+Enable debug logging:
+
+```env
+LOG_LEVEL_APP=DEBUG
+```
+
+Or at runtime:
+```bash
+curl -X POST http://localhost:8082/notification-service/actuator/loggers/com.example.notificationservice \
+  -H "Content-Type: application/json" \
+  -d '{"configuredLevel": "DEBUG"}'
 ```
 
 ---
-
-## Summary
-
-### ✅ Completed Features
-
-1. **Authentication**: JWT verification only (no login endpoint)
-2. **UUID IDs**: All entities use UUID instead of Integer
-3. **Template Type Enum**: Strong typing for template types
-4. **Dynamic Templates**: {{placeholder}} syntax with TemplateEngine
-5. **Template Caching**: Caffeine cache for performance
-6. **SSE**: Real-time notifications to connected users
-7. **Bulk Notifications**: Send to multiple users with one API call
-
-### 🚀 Next Steps
-
-1. Run migration: `V2__migrate_to_uuid.sql`
-2. Add Caffeine dependency
-3. Test SSE connections
-4. Test bulk notification API
-5. Monitor cache hit rates
-6. Consider WebSocket for bidirectional communication if needed
-
----
-
-## Questions?
-
-Check the code comments or refer to:
-- `TemplateEngine.java` - Template processing logic
-- `SseEmitterService.java` - SSE implementation
-- `NotificationService.java` - Main notification logic
-- `CacheConfig.java` - Caching configuration

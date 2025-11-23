@@ -21,10 +21,7 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Component
 @RequiredArgsConstructor
@@ -180,14 +177,28 @@ public class RedisStreamListener {
 
     private void handleAssessmentEvent(Map<Object, Object> value) {
         try {
-            // Check if it's a SessionCompletedEvent or AssessmentPublishedEvent
-            if (value.containsKey("sessionId")) {
+            log.debug("📩 Received assessment event, checking type...");
+            log.debug("Event keys: {}", value.keySet());
+
+            // Check for nested assignedUsers keys (Redis flattens them)
+            boolean hasAssignedUsers = value.keySet().stream()
+                    .anyMatch(key -> key.toString().startsWith("assignedUsers"));
+
+            boolean hasSessionId = value.containsKey("sessionId");
+
+            log.debug("hasAssignedUsers: {}, hasSessionId: {}", hasAssignedUsers, hasSessionId);
+
+            if (hasSessionId && !hasAssignedUsers) {
+                log.debug("→ Routing to handleSessionCompleted");
                 handleSessionCompleted(value);
-            } else if (value.containsKey("assignedUsers")) {
+            } else if (hasAssignedUsers) {
+                log.debug("→ Routing to handleAssessmentPublished");
                 handleAssessmentPublished(value);
+            } else {
+                log.warn("⚠️ Unknown assessment event type. Keys: {}", value.keySet());
             }
         } catch (Exception e) {
-            log.error("Failed to handle assessment event: {}", e.getMessage(), e);
+            log.error("❌ Failed to handle assessment event: {}", e.getMessage(), e);
         }
     }
 
@@ -219,33 +230,120 @@ public class RedisStreamListener {
 
     private void handleAssessmentPublished(Map<Object, Object> value) {
         try {
+            log.info("🔵 Starting to process assessment.published event");
+
+            // Clean the map first
             Map<String, Object> cleanedValue = cleanMap(value);
-            AssessmentPublishedEvent event = objectMapper.convertValue(cleanedValue, AssessmentPublishedEvent.class);
+            log.debug("Cleaned event data keys: {}", cleanedValue.keySet());
 
-            log.info("Processing assessment.published event for assessment: {}", event.getAssessmentId());
+            // Reconstruct assignedUsers from flattened keys
+            cleanedValue = reconstructNestedObjects(cleanedValue);
+            log.debug("Reconstructed event data: {}", cleanedValue);
 
+            // Parse the event
+            AssessmentPublishedEvent event;
+            try {
+                event = objectMapper.convertValue(cleanedValue, AssessmentPublishedEvent.class);
+                log.info("✅ Parsed AssessmentPublishedEvent: assessmentId={}, name={}, users={}",
+                        event.getAssessmentId(),
+                        event.getAssessmentName(),
+                        event.getAssignedUsers() != null ? event.getAssignedUsers().size() : 0);
+            } catch (Exception e) {
+                log.error("❌ Failed to parse AssessmentPublishedEvent from data: {}", cleanedValue, e);
+                return;
+            }
+
+            // Validate event
+            if (event.getAssignedUsers() == null || event.getAssignedUsers().isEmpty()) {
+                log.warn("⚠️ No assigned users in assessment event, skipping");
+                return;
+            }
+
+            // Prepare template data
             Map<String, Object> data = new HashMap<>();
             data.put("assessmentName", event.getAssessmentName());
             data.put("duration", event.getDuration());
             data.put("dueDate", event.getDueDate());
 
-            // Send notification to all assigned users
-            for (AssessmentPublishedEvent.UserInfo user : event.getAssignedUsers()) {
-                data.put("username", user.getUsername());
+            log.info("Template data prepared: {}", data);
 
-                notificationService.processNotification(
-                        "assessment.published",
-                        user.getUserId(),
-                        user.getEmail(),
-                        data,
-                        List.of(NotificationChannel.SSE, NotificationChannel.EMAIL)
-                );
+            // Send notification to each assigned user
+            for (AssessmentPublishedEvent.UserInfo user : event.getAssignedUsers()) {
+                try {
+                    log.info("📤 Sending notification to user: {} (ID: {})",
+                            user.getUsername(), user.getUserId());
+
+                    // Add username to data
+                    Map<String, Object> userData = new HashMap<>(data);
+                    userData.put("username", user.getUsername());
+
+                    notificationService.processNotification(
+                            "assessment.published",
+                            user.getUserId(),
+                            user.getEmail(),
+                            userData,
+                            List.of(NotificationChannel.SSE, NotificationChannel.EMAIL)
+                    );
+
+                    log.info("✅ Notification sent successfully to user: {}", user.getUserId());
+                } catch (Exception e) {
+                    log.error("❌ Failed to send notification to user {}: {}",
+                            user.getUserId(), e.getMessage(), e);
+                }
             }
+
+            log.info("🟢 Completed processing assessment.published event");
+
         } catch (Exception e) {
-            log.error("Failed to handle assessment published event: {}", e.getMessage(), e);
+            log.error("❌ Failed to handle assessment published event", e);
         }
     }
 
+    /**
+     * Reconstruct nested objects from Redis flattened keys
+     * Example: "assignedUsers.[0].userId" -> assignedUsers: [{userId: ...}]
+     */
+    private Map<String, Object> reconstructNestedObjects(Map<String, Object> flatMap) {
+        Map<String, Object> result = new HashMap<>();
+        Map<String, Map<Integer, Map<String, Object>>> arrays = new HashMap<>();
+
+        for (Map.Entry<String, Object> entry : flatMap.entrySet()) {
+            String key = entry.getKey();
+
+            // Check if key contains array notation like "assignedUsers.[0].userId"
+            if (key.contains(".[") && key.contains("].")) {
+                // Parse: "assignedUsers.[0].userId" -> arrayName="assignedUsers", index=0, field="userId"
+                String[] parts = key.split("\\.");
+                String arrayName = parts[0]; // "assignedUsers"
+                String indexPart = parts[1]; // "[0]"
+                String fieldName = parts[2]; // "userId"
+
+                int index = Integer.parseInt(indexPart.substring(1, indexPart.length() - 1));
+
+                arrays.computeIfAbsent(arrayName, k -> new HashMap<>())
+                        .computeIfAbsent(index, k -> new HashMap<>())
+                        .put(fieldName, entry.getValue());
+            } else {
+                // Regular field
+                result.put(key, entry.getValue());
+            }
+        }
+
+        // Convert arrays map back to List
+        for (Map.Entry<String, Map<Integer, Map<String, Object>>> arrayEntry : arrays.entrySet()) {
+            List<Map<String, Object>> list = new ArrayList<>();
+            Map<Integer, Map<String, Object>> indexedMap = arrayEntry.getValue();
+
+            // Sort by index and add to list
+            indexedMap.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(e -> list.add(e.getValue()));
+
+            result.put(arrayEntry.getKey(), list);
+        }
+
+        return result;
+    }
     private void handleProctoringEvent(Map<Object, Object> value) {
         try {
             Map<String, Object> cleanedValue = cleanMap(value);

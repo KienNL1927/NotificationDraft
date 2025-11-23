@@ -1,14 +1,14 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database
   postgres:
     image: postgres:16-alpine
     container_name: notification-db
     environment:
-      POSTGRES_DB: ${DATABASE_NAME}
-      POSTGRES_USER: ${DATABASE_USERNAME}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME:-notification_db}
+      POSTGRES_USER: ${DATABASE_USERNAME:-admin}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?Database password is required}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
     ports:
       - "${DATABASE_PORT:-5432}:5432"
     volumes:
@@ -20,33 +20,57 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
 
-  # Redis with Streams support
   redis:
     image: redis/redis-stack:latest
     container_name: notification-redis
     ports:
-      - "${REDIS_PORT:-6379}:6379"      # Redis
-      - "${REDIS_INSIGHT_PORT:-8001}:8001"      # RedisInsight (Redis GUI)
+      - "${REDIS_PORT:-6379}:6379"         # Redis
+      - "${REDIS_INSIGHT_PORT:-8001}:8001" # RedisInsight GUI
     volumes:
       - redis_data:/data
     environment:
-      - REDIS_ARGS=--save 60 1 --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy allkeys-lru ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
+      REDIS_ARGS: >-
+        --save 60 1
+        --appendonly yes
+        --appendfsync everysec
+        --maxmemory 512mb
+        --maxmemory-policy allkeys-lru
+        ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
     networks:
       - notification-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
       interval: 10s
-      timeout: 5s
+      timeout: 3s
       retries: 5
+      start_period: 5s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
 
-  # Notification Service Application
   notification-service:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - MAVEN_OPTS=-Xmx512m
     container_name: notification-service-app
     depends_on:
       postgres:
@@ -54,50 +78,123 @@ services:
       redis:
         condition: service_healthy
     environment:
-      # Spring Profile
-      SPRING_PROFILE: ${SPRING_PROFILE}
+      SPRING_PROFILE: ${SPRING_PROFILE:-prod}
 
-      # Database
       DATABASE_URL: jdbc:postgresql://postgres:5432/${DATABASE_NAME:-notification_db}
-      DATABASE_USERNAME: ${DATABASE_USERNAME:-admin}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-changeme}
+      DATABASE_USERNAME: ${DATABASE_USERNAME}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DB_POOL_MAX_SIZE: ${DB_POOL_MAX_SIZE}
+      DB_POOL_MIN_IDLE: ${DB_POOL_MIN_IDLE}
+      DB_CONNECTION_TIMEOUT: ${DB_CONNECTION_TIMEOUT}
 
-      # Redis
+      JPA_DDL_AUTO: ${JPA_DDL_AUTO:-validate}
+      JPA_SHOW_SQL: ${JPA_SHOW_SQL:-false}
+
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_TIMEOUT: ${REDIS_TIMEOUT}
+      REDIS_POOL_MAX_ACTIVE: ${REDIS_POOL_MAX_ACTIVE}
+      REDIS_POOL_MAX_IDLE: ${REDIS_POOL_MAX_IDLE}
+      REDIS_POOL_MIN_IDLE: ${REDIS_POOL_MIN_IDLE}
+      REDIS_POOL_MAX_WAIT: ${REDIS_POOL_MAX_WAIT}
 
+      FLYWAY_ENABLED: ${FLYWAY_ENABLED:-true}
 
-      # Casdoor OAuth2
+      MAIL_HOST: ${MAIL_HOST}
+      MAIL_PORT: ${MAIL_PORT}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM:-noreply@yourcompany.com}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Notification Service}
+      MAIL_CONNECTION_TIMEOUT: ${MAIL_CONNECTION_TIMEOUT:-5000}
+      MAIL_TIMEOUT: ${MAIL_TIMEOUT:-5000}
+      MAIL_WRITE_TIMEOUT: ${MAIL_WRITE_TIMEOUT:-5000}
+
       CASDOOR_ISSUER_URI: ${CASDOOR_ISSUER_URI}
       CASDOOR_JWK_URI: ${CASDOOR_JWK_URI}
 
-      # Server
       SERVER_PORT: 8082
+      TOMCAT_CONNECTION_TIMEOUT: ${TOMCAT_CONNECTION_TIMEOUT}
+      TOMCAT_MAX_CONNECTIONS: ${TOMCAT_MAX_CONNECTIONS}
+      TOMCAT_ACCEPT_COUNT: ${TOMCAT_ACCEPT_COUNT}
 
-      # Logging
-      LOG_LEVEL_ROOT: ${LOG_LEVEL_ROOT:-INFO}
-      LOG_LEVEL_APP: ${LOG_LEVEL_APP:-DEBUG}
+      MVC_ASYNC_TIMEOUT: ${MVC_ASYNC_TIMEOUT}
+
+      LOG_LEVEL_ROOT: ${LOG_LEVEL_ROOT}
+      LOG_LEVEL_APP: ${LOG_LEVEL_APP}
+      LOG_FILE_NAME: ${LOG_FILE_NAME:-/app/logs/notification-service.log}
+
+      SCHEDULING_POOL_SIZE: ${SCHEDULING_POOL_SIZE:-5}
+
+      NOTIFICATION_RETRY_MAX_ATTEMPTS: ${NOTIFICATION_RETRY_MAX_ATTEMPTS:-3}
+      NOTIFICATION_RETRY_DELAY_MS: ${NOTIFICATION_RETRY_DELAY_MS:-300000}
+      SSE_TIMEOUT_MS: ${SSE_TIMEOUT_MS:-86400000}
+      SSE_HEARTBEAT_INTERVAL_MS: ${SSE_HEARTBEAT_INTERVAL_MS:-30000}
+      SSE_CONNECTION_LIMIT: ${SSE_CONNECTION_LIMIT:-1000}
+
+      REDIS_STREAM_USER_EVENTS: ${REDIS_STREAM_USER_EVENTS:-notification:user-events}
+      REDIS_STREAM_ASSESSMENT_EVENTS: ${REDIS_STREAM_ASSESSMENT_EVENTS:-notification:assessment-events}
+      REDIS_STREAM_PROCTORING_EVENTS: ${REDIS_STREAM_PROCTORING_EVENTS:-notification:proctoring-events}
+      REDIS_STREAM_NOTIFICATION_EVENTS: ${REDIS_STREAM_NOTIFICATION_EVENTS:-notification:notification-events}
+      REDIS_CONSUMER_GROUP_ID: ${REDIS_CONSUMER_GROUP_ID:-notification-service-group}
+      REDIS_CONSUMER_NAME: ${REDIS_CONSUMER_NAME:-notification-service-1}
+
+      JAVA_OPTS: >-
+        -Xms256m
+        -Xmx512m
+        -XX:+UseG1GC
+        -XX:MaxGCPauseMillis=200
+        -Djava.security.egd=file:/dev/./urandom
     ports:
       - "${SERVER_PORT:-8082}:8082"
     networks:
       - notification-network
     volumes:
       - ./logs:/app/logs
+      - notification_temp:/tmp
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/actuator/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/notification-service/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 768M
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    # For production scaling:
+    # deploy:
+    #   replicas: 3
+    #   update_config:
+    #     parallelism: 1
+    #     delay: 10s
+    #   restart_policy:
+    #     condition: on-failure
+    #     delay: 5s
+    #     max_attempts: 3
+
 
 volumes:
   postgres_data:
     driver: local
+    name: notification_postgres_data
   redis_data:
     driver: local
+    name: notification_redis_data
+  notification_temp:
+    driver: local
+    name: notification_temp
 
 networks:
   notification-network:
     driver: bridge
+    name: notification-network
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
